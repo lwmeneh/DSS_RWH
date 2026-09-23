@@ -1,3 +1,8 @@
+# ============================================================
+# RI BHOI RWH GIS DSS
+# MOBILE-FIRST FARMER VERSION
+# ============================================================
+
 import numpy as np
 import geopandas as gpd
 import streamlit as st
@@ -8,59 +13,207 @@ from folium.plugins import (
     Draw,
     Fullscreen,
     MousePosition,
-    MeasureControl
+    MeasureControl,
 )
+
 from streamlit_folium import st_folium
+
+
+# ============================================================
+# PROJECT MODULES
+# ============================================================
 
 from config.settings import *
 
 from database.db import (
     initialize,
-    save_assessment
+    save_assessment,
 )
 
 from data.loader import load_vectors
 
 from gis.spatial import (
-    field_area_ha,
-    nearest_stream_to_point,
     nearest_feature,
-    field_watershed_relation,
     zonal_stats,
-    band_index_by_name
+    band_index_by_name,
 )
 
 from gis.lulc import (
-    detect_agricultural_patch,
-    dominant_lulc,
-    lulc_composition
+    lulc_composition,
 )
-
-from hydrology.watershed import delineate
 
 from decision.rules import (
     recommend_field,
-    recommend_watershed
+    recommend_watershed,
 )
 
 from reports.pdf_report import make_pdf
 
 from utils.ui import (
     load_css,
-    render_html
+    render_html,
 )
 
 
 # ============================================================
-# PAGE CONFIGURATION
+# STREAMLIT PAGE
 # ============================================================
 
 st.set_page_config(
     page_title=APP_SHORT_NAME,
     page_icon="💧",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed",
 )
+
+
+# ============================================================
+# MOBILE CSS
+# ============================================================
+
+st.markdown(
+    """
+<style>
+
+/* ---------------------------------------------------------
+   Main application
+--------------------------------------------------------- */
+
+.block-container {
+    padding-top: 0.8rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+    padding-bottom: 3rem;
+    max-width: 1500px;
+}
+
+
+/* ---------------------------------------------------------
+   Buttons
+--------------------------------------------------------- */
+
+.stButton > button,
+.stDownloadButton > button {
+
+    min-height: 52px;
+    font-size: 17px;
+    font-weight: 600;
+    border-radius: 12px;
+    width: 100%;
+}
+
+
+/* ---------------------------------------------------------
+   Mobile
+--------------------------------------------------------- */
+
+@media only screen and (max-width: 768px) {
+
+    .block-container {
+
+        padding-left: 0.35rem;
+        padding-right: 0.35rem;
+        padding-top: 0.35rem;
+
+    }
+
+
+    h1 {
+        font-size: 1.55rem !important;
+    }
+
+
+    h2 {
+        font-size: 1.30rem !important;
+    }
+
+
+    h3 {
+        font-size: 1.10rem !important;
+    }
+
+
+    .stButton > button,
+    .stDownloadButton > button {
+
+        min-height: 58px;
+
+        font-size: 18px;
+
+        padding: 10px;
+
+    }
+
+
+    [data-testid="stMetric"] {
+
+        padding: 8px !important;
+
+    }
+
+
+    [data-testid="stMetricValue"] {
+
+        font-size: 1.25rem !important;
+
+    }
+
+}
+
+
+/* ---------------------------------------------------------
+   Status cards
+--------------------------------------------------------- */
+
+.mobile-info {
+
+    background: #eef8fb;
+
+    border-left: 5px solid #0b8793;
+
+    padding: 12px;
+
+    border-radius: 10px;
+
+    margin-bottom: 10px;
+
+}
+
+
+.mobile-success {
+
+    background: #effaf4;
+
+    border-left: 5px solid #16a05d;
+
+    padding: 12px;
+
+    border-radius: 10px;
+
+    margin-bottom: 10px;
+
+}
+
+
+.mobile-warning {
+
+    background: #fff8e7;
+
+    border-left: 5px solid #f0a000;
+
+    padding: 12px;
+
+    border-radius: 10px;
+
+    margin-bottom: 10px;
+
+}
+
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 
 load_css()
 
@@ -72,10 +225,6 @@ initialize()
 # ============================================================
 
 required = [
-
-    CONDITIONED_DEM,
-
-    FLOW_DIRECTION,
 
     CORE_STACK,
 
@@ -95,9 +244,13 @@ required = [
 
 
 missing = [
+
     str(path)
+
     for path in required
+
     if not path.exists()
+
 ]
 
 
@@ -121,21 +274,34 @@ if missing:
 DATA = load_vectors()
 
 
-streams_utm = DATA["streams"]
+streams_utm = DATA.get(
+    "streams"
+)
 
-boundary_utm = DATA["boundary"]
+boundary_utm = DATA.get(
+    "boundary"
+)
 
-mgnrega_utm = DATA.get("mgnrega")
+mgnrega_utm = DATA.get(
+    "mgnrega"
+)
 
-final94_utm = DATA.get("final94")
+final94_utm = DATA.get(
+    "final94"
+)
 
-published_utm = DATA.get("published")
+published_utm = DATA.get(
+    "published"
+)
 
-lulc_utm = DATA.get("lulc")
+lulc_utm = DATA.get(
+    "lulc"
+)
 
 
-boundary_wgs = boundary_utm.to_crs(
-    4326
+boundary_wgs = (
+    boundary_utm
+    .to_crs("EPSG:4326")
 )
 
 
@@ -145,23 +311,11 @@ boundary_wgs = boundary_utm.to_crs(
 
 defaults = {
 
-    "farm_click": None,
+    "field_geometry": None,
 
-    "selected_outlet": None,
-
-    "auto_field": None,
-
-    "auto_field_class": None,
-
-    "auto_field_area": None,
-
-    "manual_field": None,
-
-    "field_mode": None,
+    "watershed_geometry": None,
 
     "result": None,
-
-    "last_manual_geometry": None,
 
 }
 
@@ -178,79 +332,41 @@ for key, value in defaults.items():
 # ============================================================
 
 
-def get_final_field():
+def last_drawn_polygon(
+    map_data
+):
 
     """
-    Manual boundary ALWAYS overrides automatic LULC polygon.
+    Read ONLY polygons produced by Leaflet Draw.
+
+    Ordinary map taps/clicks are ignored.
+
+    This prevents the district/LULC layer from ever becoming
+    the farmer field.
     """
 
-    if st.session_state.manual_field is not None:
+    if not map_data:
 
-        return (
-            st.session_state.manual_field,
-            "Farmer drawn / corrected boundary"
-        )
-
-    if st.session_state.auto_field is not None:
-
-        return (
-            st.session_state.auto_field,
-            "Automatic LULC agricultural patch"
-        )
-
-    return None, None
-
-
-# ------------------------------------------------------------
-
-
-def parse_drawings(map_output):
-
-    """
-    Parse Leaflet drawings.
-
-    Polygon:
-        Farmer actual field.
-
-    Point marker:
-        Watershed outlet.
-
-    Last drawn polygon is used as farmer boundary.
-    """
-
-    outlet = None
-
-    polygon = None
-
-
-    if map_output is None:
-
-        return outlet, polygon
+        return None
 
 
     drawings = (
-        map_output.get("all_drawings")
+
+        map_data.get(
+            "all_drawings"
+        )
+
         or []
+
     )
 
 
-    if (
-        not drawings
-        and map_output.get(
-            "last_active_drawing"
-        )
-    ):
-
-        drawings = [
-            map_output[
-                "last_active_drawing"
-            ]
-        ]
+    polygons = []
 
 
     for drawing in drawings:
 
-        if drawing is None:
+        if not drawing:
 
             continue
 
@@ -266,54 +382,226 @@ def parse_drawings(map_output):
         )
 
 
-        # ------------------------------------
-        # Watershed outlet marker
-        # ------------------------------------
+        if geometry_type in [
 
-        if geometry_type == "Point":
+            "Polygon",
 
-            coordinates = geometry.get(
-                "coordinates"
+            "MultiPolygon",
+
+        ]:
+
+            polygons.append(
+                geometry
             )
 
-            if coordinates:
 
-                outlet = {
+    if not polygons:
 
-                    "lon": float(
-                        coordinates[0]
-                    ),
-
-                    "lat": float(
-                        coordinates[1]
-                    )
-
-                }
+        return None
 
 
-        # ------------------------------------
-        # Farmer field
-        # ------------------------------------
-
-        elif geometry_type in (
-            "Polygon",
-            "MultiPolygon"
-        ):
-
-            polygon = geometry
-
-
-    return outlet, polygon
+    # Last polygon drawn becomes active
+    return polygons[-1]
 
 
 # ------------------------------------------------------------
 
 
-def clear_all():
+def area_ha(
+    geometry_geojson
+):
 
-    for key, value in defaults.items():
+    gdf = gpd.GeoDataFrame(
 
-        st.session_state[key] = value
+        geometry=[
+
+            shape(
+                geometry_geojson
+            )
+
+        ],
+
+        crs="EPSG:4326",
+
+    )
+
+
+    gdf = gdf.to_crs(
+        WORKING_CRS
+    )
+
+
+    return float(
+
+        gdf.geometry.iloc[0].area
+
+        / 10000.0
+
+    )
+
+
+# ------------------------------------------------------------
+
+
+def geometry_center(
+    geometry_geojson
+):
+
+    gdf = gpd.GeoDataFrame(
+
+        geometry=[
+
+            shape(
+                geometry_geojson
+            )
+
+        ],
+
+        crs="EPSG:4326",
+
+    )
+
+
+    projected = gdf.to_crs(
+        WORKING_CRS
+    )
+
+
+    centroid = (
+        projected
+        .geometry
+        .iloc[0]
+        .centroid
+    )
+
+
+    centroid_wgs = (
+
+        gpd.GeoSeries(
+
+            [centroid],
+
+            crs=WORKING_CRS,
+
+        )
+
+        .to_crs(
+            "EPSG:4326"
+        )
+
+        .iloc[0]
+
+    )
+
+
+    return [
+
+        float(
+            centroid_wgs.y
+        ),
+
+        float(
+            centroid_wgs.x
+        ),
+
+    ]
+
+
+# ------------------------------------------------------------
+
+
+def nearest_stream_distance(
+    geometry_geojson
+):
+
+    if (
+
+        streams_utm is None
+
+        or
+
+        streams_utm.empty
+
+    ):
+
+        return None
+
+
+    geom = (
+
+        gpd.GeoDataFrame(
+
+            geometry=[
+
+                shape(
+                    geometry_geojson
+                )
+
+            ],
+
+            crs="EPSG:4326",
+
+        )
+
+        .to_crs(
+            WORKING_CRS
+        )
+
+        .geometry
+        .iloc[0]
+
+    )
+
+
+    distances = (
+        streams_utm
+        .geometry
+        .distance(
+            geom
+        )
+    )
+
+
+    if distances.empty:
+
+        return None
+
+
+    return float(
+        distances.min()
+    )
+
+
+# ------------------------------------------------------------
+
+
+def clear_field():
+
+    st.session_state[
+        "field_geometry"
+    ] = None
+
+    st.session_state[
+        "watershed_geometry"
+    ] = None
+
+    st.session_state[
+        "result"
+    ] = None
+
+
+# ------------------------------------------------------------
+
+
+def clear_watershed():
+
+    st.session_state[
+        "watershed_geometry"
+    ] = None
+
+    st.session_state[
+        "result"
+    ] = None
 
 
 # ============================================================
@@ -325,138 +613,119 @@ render_html(
 )
 
 
-# ============================================================
-# SIDEBAR
-# ============================================================
-
-st.sidebar.markdown(
-    f"## 💧 {APP_SHORT_NAME}"
-)
-
-
-st.sidebar.success(
-    "Smart Assessment Mode"
-)
-
-
-farmer_name = st.sidebar.text_input(
-    "Farmer name"
-)
-
-
-village = st.sidebar.text_input(
-    "Village"
-)
-
-
-st.sidebar.markdown("---")
-
-
-st.sidebar.markdown(
-    "### Map Legend"
-)
-
-
-st.sidebar.markdown(
+st.markdown(
     """
-🟢 **Green** — Farmer field
+<div class="mobile-info">
 
-🟡 **Yellow/Green** — Detected LULC agricultural patch
+<b>📱 Mobile Farmer Mode</b><br>
 
-🟠 **Orange** — Watershed
+Use your finger to draw the actual farm boundary.
+The DSS will analyse only the area enclosed by your polygon.
 
-🔵 **Blue** — Stream
-
-🔴 **Red** — Selected outlet
-"""
+</div>
+""",
+    unsafe_allow_html=True,
 )
 
 
 # ============================================================
-# STEP 1
+# FARMER DETAILS
+# ============================================================
+
+with st.expander(
+    "👨‍🌾 Farmer Details",
+    expanded=False,
+):
+
+    farmer_name = st.text_input(
+        "Farmer Name"
+    )
+
+    village = st.text_input(
+        "Village"
+    )
+
+
+# ============================================================
+# STEP 1 — FIELD
 # ============================================================
 
 st.header(
-    "🌾 Step 1 — Select Agricultural Field"
+    "1️⃣ Draw Your Farm"
 )
 
 
-st.info(
+st.markdown(
     """
-Click anywhere inside the agricultural area.
+<div class="mobile-warning">
 
-Then click **Detect Agricultural LULC Patch**.
+<b>How to draw using mobile:</b><br><br>
 
-The detected polygon is only a mapped land-use patch.
-It may contain several individual farms.
+1. Tap the polygon tool <b>⬠</b> on the map.<br>
+2. Tap the first corner of your farm.<br>
+3. Tap the next corner.<br>
+4. Continue tapping around the farm boundary.<br>
+5. Tap the first point again to close the polygon.<br><br>
 
-If the polygon is larger than your actual field,
-use the **polygon drawing tool on the map**
-to draw the actual farmer boundary.
-"""
+<b>Do not simply tap the map without selecting the polygon tool.</b>
+
+</div>
+""",
+    unsafe_allow_html=True,
 )
 
 
 # ============================================================
-# MAP CENTER
+# FIELD MAP
 # ============================================================
 
-center = MAP_CENTER
+field_map = folium.Map(
 
-
-if st.session_state.farm_click:
-
-    center = [
-
-        st.session_state.farm_click[
-            "lat"
-        ],
-
-        st.session_state.farm_click[
-            "lon"
-        ]
-
-    ]
-
-
-# ============================================================
-# CREATE MAP
-# ============================================================
-
-m = folium.Map(
-
-    location=center,
+    location=MAP_CENTER,
 
     zoom_start=MAP_ZOOM,
 
     tiles=None,
 
-    control_scale=True
+    control_scale=True,
+
+    prefer_canvas=True,
 
 )
 
 
-# ============================================================
-# BASEMAPS
-# ============================================================
+# ------------------------------------------------------------
+# Satellite
+# ------------------------------------------------------------
 
 folium.TileLayer(
 
     tiles=(
+
         "https://server.arcgisonline.com/"
+
         "ArcGIS/rest/services/"
+
         "World_Imagery/MapServer/"
+
         "tile/{z}/{y}/{x}"
+
     ),
 
     attr="Esri",
 
     name="Satellite",
 
-    show=True
+    show=True,
 
-).add_to(m)
+).add_to(
+    field_map
+)
 
+
+# ------------------------------------------------------------
+# Street Map
+# ------------------------------------------------------------
 
 folium.TileLayer(
 
@@ -464,173 +733,86 @@ folium.TileLayer(
 
     name="Street Map",
 
-    show=False
+    show=False,
 
-).add_to(m)
+).add_to(
+    field_map
+)
 
 
-# ============================================================
-# DISTRICT BOUNDARY
-# ============================================================
+# ------------------------------------------------------------
+# District outline
+#
+# IMPORTANT:
+# only displayed as reference
+# ------------------------------------------------------------
 
 folium.GeoJson(
 
     boundary_wgs.__geo_interface__,
 
-    name="Ri Bhoi Boundary",
+    name="Ri Bhoi District",
 
     style_function=lambda feature: {
 
-        "color": "#FFD54F",
+        "color": "#FFD600",
 
         "weight": 2,
 
-        "fillOpacity": 0
+        "fillOpacity": 0,
 
-    }
+        "opacity": 0.8,
 
-).add_to(m)
+    },
 
-
-# ============================================================
-# AUTOMATIC LULC PATCH
-# ============================================================
-
-if st.session_state.auto_field is not None:
-
-    folium.GeoJson(
-
-        st.session_state.auto_field,
-
-        name="Detected Agricultural LULC Patch",
-
-        style_function=lambda feature: {
-
-            "color": "#9ACD32",
-
-            "weight": 3,
-
-            "dashArray": "7,5",
-
-            "fillColor": "#CDDC39",
-
-            "fillOpacity": 0.15
-
-        },
-
-        tooltip=(
-            "Detected agricultural LULC patch "
-            "- not cadastral boundary"
-        )
-
-    ).add_to(m)
+).add_to(
+    field_map
+)
 
 
-# ============================================================
-# FARMER MANUAL FIELD
-# ============================================================
-
-if st.session_state.manual_field is not None:
-
-    folium.GeoJson(
-
-        st.session_state.manual_field,
-
-        name="Farmer Confirmed Field",
-
-        style_function=lambda feature: {
-
-            "color": "#00C853",
-
-            "weight": 4,
-
-            "fillColor": "#69F0AE",
-
-            "fillOpacity": 0.30
-
-        },
-
-        tooltip="Farmer-confirmed field boundary"
-
-    ).add_to(m)
-
-
-# ============================================================
-# WATERSHED
-# ============================================================
+# ------------------------------------------------------------
+# Existing field
+# ------------------------------------------------------------
 
 if (
 
-    st.session_state.result
+    st.session_state[
+        "field_geometry"
+    ]
 
-    and
-
-    st.session_state.result.get(
-        "watershed_geometry"
-    )
+    is not None
 
 ):
 
     folium.GeoJson(
 
-        st.session_state.result[
-            "watershed_geometry"
+        st.session_state[
+            "field_geometry"
         ],
 
-        name="DEM Watershed",
+        name="My Farm",
 
         style_function=lambda feature: {
 
-            "color": "#FF6D00",
+            "color": "#00C853",
 
-            "weight": 3,
+            "weight": 5,
 
-            "fillColor": "#FFC107",
+            "fillColor": "#69F0AE",
 
-            "fillOpacity": 0.16
+            "fillOpacity": 0.30,
 
         },
 
-        tooltip="DEM-derived watershed"
+        tooltip="Farmer selected field",
 
-    ).add_to(m)
-
-
-# ============================================================
-# SELECTED OUTLET
-# ============================================================
-
-if st.session_state.selected_outlet:
-
-    p = st.session_state.selected_outlet
-
-
-    folium.CircleMarker(
-
-        location=[
-            p["lat"],
-            p["lon"]
-        ],
-
-        radius=7,
-
-        color="#D50000",
-
-        weight=3,
-
-        fill=True,
-
-        fill_color="#FF1744",
-
-        fill_opacity=1,
-
-        tooltip="Selected watershed outlet"
-
-    ).add_to(m)
+    ).add_to(
+        field_map
+    )
 
 
 # ============================================================
-# DRAW TOOL
+# MOBILE DRAW CONTROL
 # ============================================================
 
 Draw(
@@ -641,7 +823,9 @@ Draw(
 
     draw_options={
 
-        # Disable unwanted tools
+        # ----------------------------------------------------
+        # Disable everything except polygon
+        # ----------------------------------------------------
 
         "polyline": False,
 
@@ -651,17 +835,12 @@ Draw(
 
         "circlemarker": False,
 
-
-        # Marker used for watershed outlet
-
-        "marker": {
-
-            "repeatMode": False
-
-        },
+        "marker": False,
 
 
-        # Polygon used for actual farmer field
+        # ----------------------------------------------------
+        # Polygon
+        # ----------------------------------------------------
 
         "polygon": {
 
@@ -673,81 +852,81 @@ Draw(
 
             "repeatMode": False,
 
+            "metric": True,
+
             "shapeOptions": {
 
                 "color": "#00C853",
 
-                "weight": 4,
+                "weight": 5,
 
                 "fillColor": "#69F0AE",
 
-                "fillOpacity": 0.30
+                "fillOpacity": 0.30,
 
-            }
+            },
 
-        }
+        },
 
     },
-
 
     edit_options={
 
         "edit": True,
 
-        "remove": True
+        "remove": True,
 
-    }
+    },
 
-).add_to(m)
-
-
-# ============================================================
-# MAP UTILITIES
-# ============================================================
-
-Fullscreen().add_to(m)
+).add_to(
+    field_map
+)
 
 
-MousePosition(
-
-    position="bottomright",
-
-    separator=" | ",
-
-    prefix="Coordinates"
-
-).add_to(m)
+Fullscreen(
+    position="topright"
+).add_to(
+    field_map
+)
 
 
 MeasureControl(
 
+    position="bottomleft",
+
     primary_length_unit="meters",
 
-    primary_area_unit="hectares"
+    primary_area_unit="hectares",
 
-).add_to(m)
+).add_to(
+    field_map
+)
 
 
 folium.LayerControl(
-
-    collapsed=False
-
-).add_to(m)
+    collapsed=True
+).add_to(
+    field_map
+)
 
 
 # ============================================================
-# SHOW MAP
+# FIELD MAP RENDER
+#
+# IMPORTANT:
+# last_clicked is NOT returned.
+# Ordinary tap therefore cannot select a field.
 # ============================================================
 
-map_data = st_folium(
+field_output = st_folium(
 
-    m,
+    field_map,
 
-    height=680,
+    height=520,
 
     use_container_width=True,
 
-    key="rwh_main_map",
+    key="mobile_field_map",
 
     returned_objects=[
 
@@ -755,1474 +934,84 @@ map_data = st_folium(
 
         "last_active_drawing",
 
-        "last_clicked"
+    ],
 
+)
+
+
+# ============================================================
+# READ FIELD POLYGON
+# ============================================================
+
+new_field = last_drawn_polygon(
+    field_output
+)
+
+
+if new_field is not None:
+
+    if (
+
+        new_field
+
+        !=
+
+        st.session_state[
+            "field_geometry"
+        ]
+
+    ):
+
+        st.session_state[
+            "field_geometry"
+        ] = new_field
+
+
+        # Field changed:
+        # reset watershed and old result
+
+        st.session_state[
+            "watershed_geometry"
+        ] = None
+
+
+        st.session_state[
+            "result"
+        ] = None
+
+
+# ============================================================
+# FIELD DETAILS
+# ============================================================
+
+field_geometry = (
+
+    st.session_state[
+        "field_geometry"
     ]
 
 )
 
 
-# ============================================================
-# MAP CLICK
-# ============================================================
+if field_geometry is not None:
 
-if (
-
-    map_data
-
-    and
-
-    map_data.get(
-        "last_clicked"
+    farm_area = area_ha(
+        field_geometry
     )
 
-):
-
-    click = map_data[
-        "last_clicked"
-    ]
-
-
-    clicked_point = {
-
-        "lat": float(
-            click["lat"]
-        ),
-
-        "lon": float(
-            click["lng"]
-        )
-
-    }
-
-
-    # Update only if location has changed
-
-    if (
-
-        st.session_state.farm_click
-        != clicked_point
-
-    ):
-
-        st.session_state.farm_click = (
-            clicked_point
-        )
-
-
-# ============================================================
-# DRAWN FEATURES
-# ============================================================
-
-outlet, manual_polygon = (
-    parse_drawings(
-        map_data
-    )
-)
-
-
-# ------------------------------------------------------------
-# OUTLET
-# ------------------------------------------------------------
-
-if outlet is not None:
-
-    if (
-
-        st.session_state.selected_outlet
-        != outlet
-
-    ):
-
-        st.session_state.selected_outlet = (
-            outlet
-        )
-
-
-# ------------------------------------------------------------
-# MANUAL FIELD
-# ------------------------------------------------------------
-
-if manual_polygon is not None:
-
-    if (
-
-        st.session_state.last_manual_geometry
-        != manual_polygon
-
-    ):
-
-        st.session_state.manual_field = (
-            manual_polygon
-        )
-
-        st.session_state.last_manual_geometry = (
-            manual_polygon
-        )
-
-        st.session_state.field_mode = (
-            "manual"
-        )
-
-        # Old result invalid after boundary change
-
-        st.session_state.result = None
-
-
-# ============================================================
-# FARM CLICK INFO
-# ============================================================
-
-if st.session_state.farm_click:
-
-    pt = st.session_state.farm_click
-
-
-    st.caption(
-
-        f"Selected location: "
-
-        f"{pt['lat']:.6f}, "
-
-        f"{pt['lon']:.6f}"
-
-    )
-
-
-# ============================================================
-# FIELD CONTROLS
-# ============================================================
-
-c1, c2, c3, c4 = st.columns(
-    [1.7, 1.4, 1.4, 1]
-)
-
-
-# ------------------------------------------------------------
-# DETECT LULC
-# ------------------------------------------------------------
-
-with c1:
-
-    detect_disabled = (
-
-        lulc_utm is None
-
-        or
-
-        st.session_state.farm_click is None
-
-    )
-
-
-    if st.button(
-
-        "🌾 Detect Agricultural LULC Patch",
-
-        type="primary",
-
-        use_container_width=True,
-
-        disabled=detect_disabled
-
-    ):
-
-        point = (
-            st.session_state.farm_click
-        )
-
-
-        try:
-
-            detected = (
-                detect_agricultural_patch(
-
-                    point["lon"],
-
-                    point["lat"],
-
-                    lulc_utm
-
-                )
-            )
-
-
-            if not detected[
-                "is_agriculture"
-            ]:
-
-                class_name = (
-
-                    detected[
-                        "class_name"
-                    ]
-
-                    or
-
-                    "No mapped LULC feature"
-
-                )
-
-
-                st.warning(
-
-                    f"Selected location is classified as "
-                    f"**{class_name}**. "
-
-                    "Please click inside Crop land, "
-                    "Plantation or Shifting Cultivation, "
-                    "or draw the actual field manually."
-                )
-
-
-            else:
-
-                st.session_state.auto_field = (
-                    detected[
-                        "geometry"
-                    ]
-                )
-
-
-                st.session_state.auto_field_class = (
-                    detected[
-                        "class_name"
-                    ]
-                )
-
-
-                st.session_state.auto_field_area = (
-                    detected[
-                        "area_ha"
-                    ]
-                )
-
-
-                # Do not automatically use the
-                # LULC polygon as farmer field
-
-                st.session_state.field_mode = (
-                    "suggested"
-                )
-
-
-                st.session_state.result = None
-
-
-                st.rerun()
-
-
-        except Exception as error:
-
-            st.error(
-                f"LULC detection error: {error}"
-            )
-
-
-# ------------------------------------------------------------
-# ACCEPT AUTO
-# ------------------------------------------------------------
-
-with c2:
-
-    if st.button(
-
-        "✓ Accept Detected Patch",
-
-        use_container_width=True,
-
-        disabled=(
-            st.session_state.auto_field
-            is None
-        )
-
-    ):
-
-        st.session_state.manual_field = None
-
-        st.session_state.field_mode = (
-            "automatic"
-        )
-
-        st.session_state.result = None
-
-
-        st.success(
-            "Detected LULC patch accepted as field boundary."
-        )
-
-
-# ------------------------------------------------------------
-# USE MANUAL
-# ------------------------------------------------------------
-
-with c3:
-
-    if st.button(
-
-        "✏️ Use Drawn Field",
-
-        use_container_width=True,
-
-        disabled=(
-            st.session_state.manual_field
-            is None
-        )
-
-    ):
-
-        st.session_state.field_mode = (
-            "manual"
-        )
-
-        st.session_state.result = None
-
-
-        st.success(
-            "Farmer-drawn boundary selected."
-        )
-
-
-# ------------------------------------------------------------
-# CLEAR
-# ------------------------------------------------------------
-
-with c4:
-
-    if st.button(
-
-        "🗑 Clear",
-
-        use_container_width=True
-
-    ):
-
-        clear_all()
-
-        st.rerun()
-
-
-# ============================================================
-# AUTOMATIC PATCH INFORMATION
-# ============================================================
-
-if st.session_state.auto_field is not None:
-
-    st.warning(
-
-        f"""
-**Detected LULC:** {st.session_state.auto_field_class}
-
-**Mapped patch area:** {st.session_state.auto_field_area:.3f} ha
-
-This automatic polygon represents a mapped agricultural LULC patch.
-It is **not necessarily the farmer's cadastral or actual field boundary**.
-
-If it is larger than the actual farm, use the polygon tool on the
-left side of the map to draw the real field boundary.
-"""
-    )
-
-
-# ============================================================
-# FINAL FIELD
-# ============================================================
-
-field, boundary_source = (
-    get_final_field()
-)
-
-
-if field is not None:
-
-    area_ha = field_area_ha(
-        field
-    )
-
-
-    if (
-
-        st.session_state.manual_field
-        is not None
-
-    ):
-
-        st.success(
-
-            f"✅ Farmer-drawn field active | "
-            f"Area = {area_ha:.3f} ha"
-        )
-
-
-    else:
-
-        st.info(
-
-            f"Automatic LULC patch active | "
-            f"Area = {area_ha:.3f} ha"
-        )
-
-
-    # ----------------------------------
-    # LULC
-    # ----------------------------------
-
-    if lulc_utm is not None:
-
-        dominant = dominant_lulc(
-
-            field,
-
-            lulc_utm
-
-        )
-
-
-        if dominant:
-
-            st.write(
-
-                f"Dominant LULC: "
-                f"**{dominant['name']}** "
-                f"({dominant['percent']:.1f}%)"
-
-            )
-
-
-else:
-
-    st.warning(
-
-        "No field boundary confirmed yet."
-    )
-
-
-# ============================================================
-# DRAWING INSTRUCTIONS
-# ============================================================
-
-with st.expander(
-    "✏️ How to draw the actual farm boundary"
-):
 
     st.markdown(
-        """
-1. Zoom to the farmer's field using the satellite map.
+        f"""
+<div class="mobile-success">
 
-2. Click the **polygon icon** on the left side of the map.
+✅ <b>Farm boundary captured</b><br>
 
-3. Click each corner of the actual farm.
+Farm area:
+<b>{farm_area:.3f} ha</b>
 
-4. Continue around the field boundary.
-
-5. Click the first point again or double-click the final point.
-
-6. The polygon will close automatically.
-
-7. The manually drawn green polygon overrides the automatic LULC patch.
-
-8. All runoff and RWH calculations will then use the manually drawn field.
-"""
-    )
-
-
-# ============================================================
-# STEP 2 — WATERSHED OUTLET
-# ============================================================
-
-st.markdown("---")
-
-
-st.header(
-    "🌊 Step 2 — Select Watershed Outlet"
-)
-
-
-st.info(
-    """
-Use the **marker tool** on the map and place the marker near the drainage
-outlet associated with the field.
-
-The DSS searches for the nearest mapped stream within 200 m.
-
-If no mapped stream is found, the field-level RWH assessment will still run.
-"""
-)
-
-
-# ============================================================
-# STREAM SNAP INFORMATION
-# ============================================================
-
-snapped_stream = None
-
-
-if st.session_state.selected_outlet:
-
-    outlet_point = (
-        st.session_state.selected_outlet
-    )
-
-
-    snapped_stream = (
-        nearest_stream_to_point(
-
-            outlet_point["lon"],
-
-            outlet_point["lat"],
-
-            streams_utm,
-
-            MAX_STREAM_SNAP_M
-
-        )
-    )
-
-
-    if snapped_stream:
-
-        st.success(
-
-            f"✅ Mapped stream found "
-            f"{snapped_stream['distance_m']:.1f} m "
-            f"from selected outlet."
-
-        )
-
-
-    else:
-
-        st.warning(
-
-            "No mapped stream found within 200 m. "
-            "Field-level analysis can still proceed."
-
-        )
-
-
-# ============================================================
-# ACTION BUTTONS
-# ============================================================
-
-reset_col, run_col = st.columns(
-    [1, 4]
-)
-
-
-with reset_col:
-
-    if st.button(
-
-        "🔄 Reset",
-
-        use_container_width=True
-
-    ):
-
-        clear_all()
-
-        st.rerun()
-
-
-with run_col:
-
-    run_assessment = st.button(
-
-        "💧 RUN AUTOMATIC RWH ASSESSMENT",
-
-        type="primary",
-
-        use_container_width=True
-
-    )
-
-
-# ============================================================
-# ANALYSIS
-# ============================================================
-
-if run_assessment:
-
-    field, boundary_source = (
-        get_final_field()
-    )
-
-
-    # -----------------------------------
-    # FIELD CHECK
-    # -----------------------------------
-
-    if field is None:
-
-        st.error(
-
-            "Please detect or draw the farmer field first."
-
-        )
-
-        st.stop()
-
-
-    # -----------------------------------
-    # FIELD AREA
-    # -----------------------------------
-
-    field_area = field_area_ha(
-        field
-    )
-
-
-    # -----------------------------------
-    # CN
-    # -----------------------------------
-
-    cn_stats = zonal_stats(
-
-        CN_RASTER,
-
-        field
-
-    )
-
-
-    field_cn = cn_stats[
-        "mean"
-    ]
-
-
-    # -----------------------------------
-    # ANNUAL RUNOFF
-    # -----------------------------------
-
-    runoff_stats = zonal_stats(
-
-        MEAN_RUNOFF_RASTER,
-
-        field
-
-    )
-
-
-    field_runoff_mm = (
-        runoff_stats[
-            "mean"
-        ]
-    )
-
-
-    # -----------------------------------
-    # DEPENDABLE RUNOFF
-    # -----------------------------------
-
-    dependable_stats = zonal_stats(
-
-        DEPENDABLE_RUNOFF_RASTER,
-
-        field
-
-    )
-
-
-    dependable_mm = (
-        dependable_stats[
-            "mean"
-        ]
-    )
-
-
-    # -----------------------------------
-    # RUNOFF COEFFICIENT
-    # -----------------------------------
-
-    coeff_stats = zonal_stats(
-
-        RUNOFF_COEFF_RASTER,
-
-        field
-
-    )
-
-
-    runoff_coeff = (
-        coeff_stats[
-            "mean"
-        ]
-    )
-
-
-    # -----------------------------------
-    # SLOPE
-    # -----------------------------------
-
-    field_slope = np.nan
-
-
-    slope_band = band_index_by_name(
-
-        CORE_STACK,
-
-        "slope"
-
-    )
-
-
-    if slope_band:
-
-        slope_stats = zonal_stats(
-
-            CORE_STACK,
-
-            field,
-
-            slope_band
-
-        )
-
-
-        field_slope = slope_stats[
-            "mean"
-        ]
-
-
-    # ========================================================
-    # FIELD GEOMETRY PROJECTED
-    # ========================================================
-
-    field_geometry_utm = (
-
-        gpd.GeoDataFrame(
-
-            geometry=[
-                shape(field)
-            ],
-
-            crs=4326
-
-        )
-
-        .to_crs(
-            WORKING_CRS
-        )
-
-        .geometry.iloc[0]
-
-    )
-
-
-    # ========================================================
-    # STREAM DISTANCE
-    # ========================================================
-
-    stream_distance = None
-
-
-    if (
-
-        streams_utm is not None
-
-        and
-
-        not streams_utm.empty
-
-    ):
-
-        distances = (
-            streams_utm.geometry.distance(
-                field_geometry_utm
-            )
-        )
-
-
-        if len(distances):
-
-            stream_distance = float(
-                distances.min()
-            )
-
-
-    # ========================================================
-    # DOMINANT LULC
-    # ========================================================
-
-    dominant = None
-
-    field_lulc_comp = []
-
-
-    if lulc_utm is not None:
-
-        dominant = dominant_lulc(
-
-            field,
-
-            lulc_utm
-
-        )
-
-
-        field_lulc_comp = (
-            lulc_composition(
-
-                field,
-
-                lulc_utm
-
-            )
-        )
-
-
-    dominant_name = (
-
-        dominant["name"]
-
-        if dominant
-
-        else None
-
-    )
-
-
-    # ========================================================
-    # WATER VOLUME
-    # ========================================================
-
-    annual_runoff_m3 = np.nan
-
-
-    dependable_runoff_m3 = np.nan
-
-
-    if np.isfinite(
-        field_runoff_mm
-    ):
-
-        annual_runoff_m3 = (
-
-            field_runoff_mm
-
-            *
-
-            field_area
-
-            *
-
-            10.0
-
-        )
-
-
-    if np.isfinite(
-        dependable_mm
-    ):
-
-        dependable_runoff_m3 = (
-
-            dependable_mm
-
-            *
-
-            field_area
-
-            *
-
-            10.0
-
-        )
-
-
-    # ========================================================
-    # NEAREST STRUCTURES
-    # ========================================================
-
-    nearest_mgnrega = (
-        nearest_feature(
-
-            field,
-
-            mgnrega_utm
-
-        )
-
-        if mgnrega_utm is not None
-
-        else None
-    )
-
-
-    nearest_final_site = (
-        nearest_feature(
-
-            field,
-
-            final94_utm
-
-        )
-
-        if final94_utm is not None
-
-        else None
-    )
-
-
-    nearest_published = (
-        nearest_feature(
-
-            field,
-
-            published_utm
-
-        )
-
-        if published_utm is not None
-
-        else None
-    )
-
-
-    # ========================================================
-    # FIELD RECOMMENDATIONS
-    # ========================================================
-
-    farmer_recommendations = (
-        recommend_field(
-
-            field_area,
-
-            field_slope,
-
-            field_runoff_mm,
-
-            field_cn,
-
-            stream_distance,
-
-            dominant_name
-
-        )
-    )
-
-
-    # ========================================================
-    # INITIAL RESULT
-    # ========================================================
-
-    result = {
-
-        "field_boundary_source":
-            boundary_source,
-
-        "field_area_ha":
-            field_area,
-
-        "dominant_lulc_name":
-            dominant_name,
-
-        "field_lulc_composition":
-            field_lulc_comp,
-
-        "field_cn":
-            field_cn,
-
-        "field_slope":
-            field_slope,
-
-        "field_runoff_mm":
-            field_runoff_mm,
-
-        "field_dependable_mm":
-            dependable_mm,
-
-        "field_runoff_coeff":
-            runoff_coeff,
-
-        "field_runoff_m3":
-            annual_runoff_m3,
-
-        "field_dependable_m3":
-            dependable_runoff_m3,
-
-        "field_stream_distance_m":
-            stream_distance,
-
-        "nearest_mgnrega":
-            nearest_mgnrega,
-
-        "nearest_final_site":
-            nearest_final_site,
-
-        "nearest_published":
-            nearest_published,
-
-        "watershed_geometry":
-            None,
-
-        "watershed_area_ha":
-            None,
-
-        "field_watershed_relation":
-            None,
-
-        "watershed_lulc_composition":
-            [],
-
-        "farmer_recommendations":
-            farmer_recommendations,
-
-        "watershed_recommendations":
-            []
-
-    }
-
-
-    # ========================================================
-    # WATERSHED ANALYSIS
-    # ========================================================
-
-    if (
-
-        st.session_state.selected_outlet
-
-        is not None
-
-    ):
-
-        outlet_point = (
-            st.session_state.selected_outlet
-        )
-
-
-        snapped = (
-            nearest_stream_to_point(
-
-                outlet_point["lon"],
-
-                outlet_point["lat"],
-
-                streams_utm,
-
-                MAX_STREAM_SNAP_M
-
-            )
-        )
-
-
-        if snapped:
-
-            try:
-
-                watershed = delineate(
-
-                    snapped["lon"],
-
-                    snapped["lat"]
-
-                )
-
-
-                result[
-                    "watershed_geometry"
-                ] = watershed[
-                    "geometry"
-                ]
-
-
-                result[
-                    "watershed_area_ha"
-                ] = watershed[
-                    "area_ha"
-                ]
-
-
-                # --------------------------------
-                # FIELD VS WATERSHED
-                # --------------------------------
-
-                result[
-                    "field_watershed_relation"
-                ] = (
-
-                    field_watershed_relation(
-
-                        field,
-
-                        watershed[
-                            "geometry"
-                        ]
-
-                    )
-
-                )
-
-
-                # --------------------------------
-                # WATERSHED LULC
-                # --------------------------------
-
-                if lulc_utm is not None:
-
-                    result[
-                        "watershed_lulc_composition"
-                    ] = (
-
-                        lulc_composition(
-
-                            watershed[
-                                "geometry"
-                            ],
-
-                            lulc_utm
-
-                        )
-
-                    )
-
-
-                # --------------------------------
-                # WATERSHED RECOMMENDATIONS
-                # --------------------------------
-
-                result[
-                    "watershed_recommendations"
-                ] = (
-
-                    recommend_watershed(
-
-                        result[
-                            "watershed_lulc_composition"
-                        ]
-
-                    )
-
-                )
-
-
-            except Exception as error:
-
-                st.warning(
-
-                    f"Watershed delineation "
-                    f"could not be completed: {error}"
-
-                )
-
-
-    # ========================================================
-    # SAVE
-    # ========================================================
-
-    st.session_state.result = (
-        result
-    )
-
-
-    if farmer_name or village:
-
-        try:
-
-            save_assessment(
-
-                farmer_name,
-
-                village,
-
-                result
-
-            )
-
-        except Exception as error:
-
-            st.warning(
-
-                f"Assessment completed but "
-                f"database save failed: {error}"
-
-            )
-
-
-    st.rerun()
-
-
-# ============================================================
-# RESULTS
-# ============================================================
-
-if st.session_state.result:
-
-    result = (
-        st.session_state.result
-    )
-
-
-    st.markdown("---")
-
-
-    st.header(
-        "📊 Automatic RWH Assessment"
-    )
-
-
-    # ========================================================
-    # FIELD SOURCE
-    # ========================================================
-
-    st.caption(
-
-        "Boundary used for analysis: "
-        f"**{result['field_boundary_source']}**"
-
-    )
-
-
-    # ========================================================
-    # FIRST METRIC ROW
-    # ========================================================
-
-    c1, c2, c3, c4 = st.columns(
-        4
-    )
-
-
-    c1.metric(
-
-        "Field Area",
-
-        f"{result['field_area_ha']:.3f} ha"
-
-    )
-
-
-    c2.metric(
-
-        "Dominant LULC",
-
-        result[
-            "dominant_lulc_name"
-        ]
-
-        or
-
-        "No data"
-
-    )
-
-
-    c3.metric(
-
-        "Mean CN-II",
-
-        (
-            f"{result['field_cn']:.1f}"
-
-            if np.isfinite(
-                result["field_cn"]
-            )
-
-            else
-
-            "No data"
-        )
-
-    )
-
-
-    c4.metric(
-
-        "Mean Slope",
-
-        (
-            f"{result['field_slope']:.2f}%"
-
-            if np.isfinite(
-                result["field_slope"]
-            )
-
-            else
-
-            "No data"
-        )
-
-    )
-
-
-    # ========================================================
-    # SECOND METRIC ROW
-    # ========================================================
-
-    c1, c2, c3, c4 = st.columns(
-        4
-    )
-
-
-    c1.metric(
-
-        "Mean Annual Runoff",
-
-        (
-            f"{result['field_runoff_mm']:.1f} mm"
-
-            if np.isfinite(
-                result[
-                    "field_runoff_mm"
-                ]
-            )
-
-            else
-
-            "No data"
-        )
-
-    )
-
-
-    c2.metric(
-
-        "75% Dependable Runoff",
-
-        (
-            f"{result['field_dependable_mm']:.1f} mm"
-
-            if np.isfinite(
-                result[
-                    "field_dependable_mm"
-                ]
-            )
-
-            else
-
-            "No data"
-        )
-
-    )
-
-
-    c3.metric(
-
-        "Annual Runoff Volume",
-
-        (
-            f"{result['field_runoff_m3']:,.0f} m³"
-
-            if np.isfinite(
-                result[
-                    "field_runoff_m3"
-                ]
-            )
-
-            else
-
-            "No data"
-        )
-
-    )
-
-
-    c4.metric(
-
-        "Dependable Water",
-
-        (
-            f"{result['field_dependable_m3']:,.0f} m³"
-
-            if np.isfinite(
-                result[
-                    "field_dependable_m3"
-                ]
-            )
-
-            else
-
-            "No data"
-        )
-
-    )
-
-
-    # ========================================================
-    # THIRD METRIC ROW
-    # ========================================================
-
-    c1, c2, c3, c4 = st.columns(
-        4
-    )
-
-
-    c1.metric(
-
-        "Runoff Coefficient",
-
-        (
-            f"{result['field_runoff_coeff']:.3f}"
-
-            if np.isfinite(
-                result[
-                    "field_runoff_coeff"
-                ]
-            )
-
-            else
-
-            "No data"
-        )
-
-    )
-
-
-    c2.metric(
-
-        "Nearest Stream",
-
-        (
-            f"{result['field_stream_distance_m']:.0f} m"
-
-            if result[
-                "field_stream_distance_m"
-            ]
-
-            is not None
-
-            else
-
-            "No data"
-        )
-
-    )
-
-
-    c3.metric(
-
-        "Nearest MGNREGA Structure",
-
-        (
-            f"{result['nearest_mgnrega']['distance_m']:.0f} m"
-
-            if result[
-                "nearest_mgnrega"
-            ]
-
-            else
-
-            "No data"
-        )
-
-    )
-
-
-    c4.metric(
-
-        "Nearest Proposed Site",
-
-        (
-            f"{result['nearest_final_site']['distance_m']:.0f} m"
-
-            if result[
-                "nearest_final_site"
-            ]
-
-            else
-
-            "No data"
-        )
-
+</div>
+""",
+        unsafe_allow_html=True,
     )
 
 
@@ -2230,251 +1019,1320 @@ if st.session_state.result:
     # FIELD LULC
     # ========================================================
 
-    if result[
-        "field_lulc_composition"
-    ]:
+    if lulc_utm is not None:
 
-        st.subheader(
-            "🌾 Field LULC Composition"
+        field_lulc = (
+            lulc_composition(
+
+                field_geometry,
+
+                lulc_utm,
+
+            )
         )
 
 
-        st.dataframe(
+        if field_lulc:
 
-            result[
-                "field_lulc_composition"
-            ],
-
-            use_container_width=True,
-
-            hide_index=True
-
-        )
+            dominant_lulc = (
+                field_lulc[0]
+            )
 
 
-    # ========================================================
-    # FIELD RECOMMENDATIONS
-    # ========================================================
+            st.markdown(
+                f"""
+<div class="mobile-info">
 
-    st.subheader(
-        "🏗️ Farmer-Level RWH Recommendations"
-    )
-
-
-    for (
-        structure,
-        explanation
-    ) in result[
-        "farmer_recommendations"
-    ]:
-
-        st.markdown(
-
-            f"""
-<div class="good-card">
-
-<b>✓ {structure}</b>
+🌾 <b>Dominant Land Use:</b>
+{dominant_lulc["name"]}
 
 <br>
 
-{explanation}
+Coverage:
+{dominant_lulc["percent"]:.1f}%
 
 </div>
 """,
+                unsafe_allow_html=True,
+            )
 
-            unsafe_allow_html=True
 
-        )
+            with st.expander(
+                "View complete farm LULC"
+            ):
+
+                st.dataframe(
+
+                    field_lulc,
+
+                    use_container_width=True,
+
+                    hide_index=True,
+
+                )
+
+
+    if st.button(
+        "🗑️ Redraw Farm Boundary",
+        use_container_width=True,
+    ):
+
+        clear_field()
+
+        st.rerun()
+
+
+else:
+
+    st.info(
+        "Draw and close the green farm polygon to continue."
+    )
+
+
+# ============================================================
+# STEP 2 — WATERSHED
+# ============================================================
+
+if field_geometry is not None:
+
+    st.markdown("---")
+
+
+    st.header(
+        "2️⃣ Draw Watershed / Catchment"
+    )
+
+
+    st.markdown(
+        """
+<div class="mobile-info">
+
+Use the same method:
+
+<b>Tap polygon tool → tap watershed boundary points → close polygon.</b>
+
+The orange polygon should represent the contributing
+catchment surrounding the farm or proposed RWH location.
+
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+    map_center = geometry_center(
+        field_geometry
+    )
+
+
+    watershed_map = folium.Map(
+
+        location=map_center,
+
+        zoom_start=14,
+
+        tiles=None,
+
+        control_scale=True,
+
+        prefer_canvas=True,
+
+    )
 
 
     # ========================================================
-    # WATERSHED RESULTS
+    # BASEMAP
+    # ========================================================
+
+    folium.TileLayer(
+
+        tiles=(
+
+            "https://server.arcgisonline.com/"
+
+            "ArcGIS/rest/services/"
+
+            "World_Imagery/MapServer/"
+
+            "tile/{z}/{y}/{x}"
+
+        ),
+
+        attr="Esri",
+
+        name="Satellite",
+
+        show=True,
+
+    ).add_to(
+        watershed_map
+    )
+
+
+    folium.TileLayer(
+
+        "OpenStreetMap",
+
+        name="Street Map",
+
+        show=False,
+
+    ).add_to(
+        watershed_map
+    )
+
+
+    # ========================================================
+    # FARM REFERENCE
+    # ========================================================
+
+    folium.GeoJson(
+
+        field_geometry,
+
+        name="My Farm",
+
+        style_function=lambda feature: {
+
+            "color": "#00C853",
+
+            "weight": 5,
+
+            "fillColor": "#69F0AE",
+
+            "fillOpacity": 0.25,
+
+        },
+
+    ).add_to(
+        watershed_map
+    )
+
+
+    # ========================================================
+    # EXISTING WATERSHED
     # ========================================================
 
     if (
 
-        result[
-            "watershed_area_ha"
+        st.session_state[
+            "watershed_geometry"
         ]
 
         is not None
 
     ):
 
-        st.subheader(
-            "🌊 DEM Watershed Assessment"
-        )
+        folium.GeoJson(
 
+            st.session_state[
+                "watershed_geometry"
+            ],
 
-        w1, w2 = st.columns(
-            2
-        )
+            name="My Watershed",
 
+            style_function=lambda feature: {
 
-        w1.metric(
+                "color": "#FF6D00",
 
-            "Watershed Area",
+                "weight": 5,
 
-            f"{result['watershed_area_ha']:.2f} ha"
+                "fillColor": "#FFB74D",
 
-        )
+                "fillOpacity": 0.20,
 
+            },
 
-        relation = result[
-            "field_watershed_relation"
-        ]
-
-
-        if relation:
-
-            w2.metric(
-
-                "Field Inside Watershed",
-
-                f"{relation['percent_inside']:.1f}%"
-
-            )
-
-
-            if relation[
-                "fully_inside"
-            ]:
-
-                st.success(
-
-                    "The selected field is fully inside "
-                    "the delineated watershed."
-
-                )
-
-
-            elif relation[
-                "intersects"
-            ]:
-
-                st.warning(
-
-                    "The selected field only partially "
-                    "intersects the delineated watershed."
-
-                )
-
-
-            else:
-
-                st.warning(
-
-                    "The selected field lies outside "
-                    "the delineated watershed."
-
-                )
-
-
-        # ----------------------------------------
-        # WATERSHED LULC
-        # ----------------------------------------
-
-        if result[
-            "watershed_lulc_composition"
-        ]:
-
-            st.subheader(
-                "🌿 Watershed LULC Composition"
-            )
-
-
-            st.dataframe(
-
-                result[
-                    "watershed_lulc_composition"
-                ],
-
-                use_container_width=True,
-
-                hide_index=True
-
-            )
-
-
-        # ----------------------------------------
-        # WATERSHED RECOMMENDATIONS
-        # ----------------------------------------
-
-        st.subheader(
-            "🧱 Watershed-Level Recommendations"
-        )
-
-
-        for (
-            structure,
-            explanation
-        ) in result[
-            "watershed_recommendations"
-        ]:
-
-            st.markdown(
-
-                f"""
-<div class="good-card">
-
-<b>✓ {structure}</b>
-
-<br>
-
-{explanation}
-
-</div>
-""",
-
-                unsafe_allow_html=True
-
-            )
-
-
-    else:
-
-        st.info(
-
-            "A DEM watershed was not delineated. "
-            "The field-level RWH assessment remains available."
-
+        ).add_to(
+            watershed_map
         )
 
 
     # ========================================================
-    # SCIENTIFIC DISCLAIMER
+    # WATERSHED DRAW TOOL
     # ========================================================
 
-    st.markdown(
+    Draw(
 
-        """
-<div class="warn-card">
+        export=False,
 
-<b>Planning-level GIS Decision Support Output</b>
+        position="topleft",
 
-<br><br>
+        draw_options={
 
-The automatically detected LULC polygon represents a mapped
-land-use unit and not a cadastral/legal landholding boundary.
+            "polyline": False,
 
-Where available, the farmer-drawn boundary should be preferred
-for field-level runoff and rainwater harvesting calculations.
+            "rectangle": False,
 
-The recommended RWH structures represent GIS-based screening.
-Final structure location, dimensions, storage capacity, spillway,
-foundation and structural design require field verification,
-detailed survey and engineering design.
+            "circle": False,
 
-</div>
-""",
+            "circlemarker": False,
 
-        unsafe_allow_html=True
+            "marker": False,
+
+
+            "polygon": {
+
+                "allowIntersection": False,
+
+                "showArea": True,
+
+                "metric": True,
+
+                "repeatMode": False,
+
+                "shapeOptions": {
+
+                    "color": "#FF6D00",
+
+                    "weight": 5,
+
+                    "fillColor": "#FFB74D",
+
+                    "fillOpacity": 0.20,
+
+                },
+
+            },
+
+        },
+
+        edit_options={
+
+            "edit": True,
+
+            "remove": True,
+
+        },
+
+    ).add_to(
+        watershed_map
+    )
+
+
+    Fullscreen(
+        position="topright"
+    ).add_to(
+        watershed_map
+    )
+
+
+    MeasureControl(
+
+        position="bottomleft",
+
+        primary_length_unit="meters",
+
+        primary_area_unit="hectares",
+
+    ).add_to(
+        watershed_map
+    )
+
+
+    folium.LayerControl(
+        collapsed=True
+    ).add_to(
+        watershed_map
+    )
+
+
+    # ========================================================
+    # RENDER WATERSHED MAP
+    # ========================================================
+
+    watershed_output = st_folium(
+
+        watershed_map,
+
+        height=520,
+
+        use_container_width=True,
+
+        key="mobile_watershed_map",
+
+        returned_objects=[
+
+            "all_drawings",
+
+            "last_active_drawing",
+
+        ],
 
     )
 
 
     # ========================================================
-    # PDF REPORT
+    # SAVE WATERSHED
+    # ========================================================
+
+    new_watershed = (
+        last_drawn_polygon(
+            watershed_output
+        )
+    )
+
+
+    if new_watershed is not None:
+
+        if (
+
+            new_watershed
+
+            !=
+
+            st.session_state[
+                "watershed_geometry"
+            ]
+
+        ):
+
+            st.session_state[
+                "watershed_geometry"
+            ] = new_watershed
+
+
+            st.session_state[
+                "result"
+            ] = None
+
+
+    watershed_geometry = (
+
+        st.session_state[
+            "watershed_geometry"
+        ]
+
+    )
+
+
+    if watershed_geometry is not None:
+
+        catchment_area = (
+            area_ha(
+                watershed_geometry
+            )
+        )
+
+
+        st.markdown(
+            f"""
+<div class="mobile-success">
+
+✅ <b>Watershed captured</b><br>
+
+Watershed area:
+<b>{catchment_area:.2f} ha</b>
+
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+
+        if lulc_utm is not None:
+
+            watershed_lulc = (
+                lulc_composition(
+
+                    watershed_geometry,
+
+                    lulc_utm,
+
+                )
+            )
+
+
+            if watershed_lulc:
+
+                with st.expander(
+                    "🌿 View Watershed LULC"
+                ):
+
+                    st.dataframe(
+
+                        watershed_lulc,
+
+                        use_container_width=True,
+
+                        hide_index=True,
+
+                    )
+
+
+        if st.button(
+            "🗑️ Redraw Watershed",
+            use_container_width=True,
+        ):
+
+            clear_watershed()
+
+            st.rerun()
+
+
+    else:
+
+        st.info(
+            "Draw and close the orange watershed polygon."
+        )
+
+
+# ============================================================
+# STEP 3 — ANALYSIS
+# ============================================================
+
+if (
+
+    st.session_state[
+        "field_geometry"
+    ]
+
+    is not None
+
+    and
+
+    st.session_state[
+        "watershed_geometry"
+    ]
+
+    is not None
+
+):
+
+    st.markdown("---")
+
+
+    st.header(
+        "3️⃣ Analyse Water & RWH Structure"
+    )
+
+
+    st.markdown(
+        """
+<div class="mobile-info">
+
+The DSS will now analyse:
+
+• Farm area  
+• Watershed area  
+• Land use  
+• Slope  
+• CN-II  
+• Runoff depth  
+• Dependable runoff  
+• Available water volume  
+• Distance to stream  
+• Existing RWH structures  
+• Suitable structure recommendation
+
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+    analyse = st.button(
+
+        "💧 RUN RWH ASSESSMENT",
+
+        type="primary",
+
+        use_container_width=True,
+
+    )
+
+
+    if analyse:
+
+        field = (
+            st.session_state[
+                "field_geometry"
+            ]
+        )
+
+
+        watershed = (
+            st.session_state[
+                "watershed_geometry"
+            ]
+        )
+
+
+        # ====================================================
+        # AREA
+        # ====================================================
+
+        field_area = area_ha(
+            field
+        )
+
+
+        watershed_area = area_ha(
+            watershed
+        )
+
+
+        # ====================================================
+        # FIELD LULC
+        # ====================================================
+
+        field_lulc = (
+
+            lulc_composition(
+
+                field,
+
+                lulc_utm,
+
+            )
+
+            if lulc_utm is not None
+
+            else []
+
+        )
+
+
+        dominant_name = (
+
+            field_lulc[0]["name"]
+
+            if field_lulc
+
+            else None
+
+        )
+
+
+        # ====================================================
+        # WATERSHED LULC
+        # ====================================================
+
+        watershed_lulc = (
+
+            lulc_composition(
+
+                watershed,
+
+                lulc_utm,
+
+            )
+
+            if lulc_utm is not None
+
+            else []
+
+        )
+
+
+        # ====================================================
+        # CN
+        # ====================================================
+
+        cn = zonal_stats(
+
+            CN_RASTER,
+
+            field,
+
+        )["mean"]
+
+
+        # ====================================================
+        # RUNOFF
+        # ====================================================
+
+        runoff_mm = zonal_stats(
+
+            MEAN_RUNOFF_RASTER,
+
+            field,
+
+        )["mean"]
+
+
+        # ====================================================
+        # DEPENDABLE RUNOFF
+        # ====================================================
+
+        dependable_mm = zonal_stats(
+
+            DEPENDABLE_RUNOFF_RASTER,
+
+            field,
+
+        )["mean"]
+
+
+        # ====================================================
+        # RUNOFF COEFFICIENT
+        # ====================================================
+
+        runoff_coefficient = zonal_stats(
+
+            RUNOFF_COEFF_RASTER,
+
+            field,
+
+        )["mean"]
+
+
+        # ====================================================
+        # SLOPE
+        # ====================================================
+
+        slope = np.nan
+
+
+        slope_band = (
+            band_index_by_name(
+
+                CORE_STACK,
+
+                "slope",
+
+            )
+        )
+
+
+        if slope_band:
+
+            slope = zonal_stats(
+
+                CORE_STACK,
+
+                field,
+
+                slope_band,
+
+            )["mean"]
+
+
+        # ====================================================
+        # WATER VOLUME
+        # ====================================================
+
+        annual_water_m3 = np.nan
+
+
+        dependable_water_m3 = np.nan
+
+
+        if np.isfinite(
+            runoff_mm
+        ):
+
+            annual_water_m3 = (
+
+                runoff_mm
+
+                * field_area
+
+                * 10.0
+
+            )
+
+
+        if np.isfinite(
+            dependable_mm
+        ):
+
+            dependable_water_m3 = (
+
+                dependable_mm
+
+                * field_area
+
+                * 10.0
+
+            )
+
+
+        # ====================================================
+        # STREAM DISTANCE
+        # ====================================================
+
+        stream_distance = (
+            nearest_stream_distance(
+                field
+            )
+        )
+
+
+        # ====================================================
+        # EXISTING STRUCTURES
+        # ====================================================
+
+        nearest_mgnrega = (
+
+            nearest_feature(
+
+                field,
+
+                mgnrega_utm,
+
+            )
+
+            if mgnrega_utm is not None
+
+            else None
+
+        )
+
+
+        nearest_final = (
+
+            nearest_feature(
+
+                field,
+
+                final94_utm,
+
+            )
+
+            if final94_utm is not None
+
+            else None
+
+        )
+
+
+        nearest_published = (
+
+            nearest_feature(
+
+                field,
+
+                published_utm,
+
+            )
+
+            if published_utm is not None
+
+            else None
+
+        )
+
+
+        # ====================================================
+        # STRUCTURE RECOMMENDATION
+        # ====================================================
+
+        field_recommendations = (
+            recommend_field(
+
+                field_area,
+
+                slope,
+
+                runoff_mm,
+
+                cn,
+
+                stream_distance,
+
+                dominant_name,
+
+            )
+        )
+
+
+        watershed_recommendations = (
+            recommend_watershed(
+
+                watershed_lulc
+
+            )
+        )
+
+
+        # ====================================================
+        # RESULT
+        # ====================================================
+
+        result = {
+
+            "field_boundary_source":
+                "Farmer mobile-drawn polygon",
+
+            "field_area_ha":
+                field_area,
+
+            "watershed_area_ha":
+                watershed_area,
+
+            "dominant_lulc_name":
+                dominant_name,
+
+            "field_lulc_composition":
+                field_lulc,
+
+            "watershed_lulc_composition":
+                watershed_lulc,
+
+            "field_cn":
+                cn,
+
+            "field_slope":
+                slope,
+
+            "field_runoff_mm":
+                runoff_mm,
+
+            "field_dependable_mm":
+                dependable_mm,
+
+            "field_runoff_coeff":
+                runoff_coefficient,
+
+            "field_runoff_m3":
+                annual_water_m3,
+
+            "field_dependable_m3":
+                dependable_water_m3,
+
+            "field_stream_distance_m":
+                stream_distance,
+
+            "nearest_mgnrega":
+                nearest_mgnrega,
+
+            "nearest_final_site":
+                nearest_final,
+
+            "nearest_published":
+                nearest_published,
+
+            "farmer_recommendations":
+                field_recommendations,
+
+            "watershed_recommendations":
+                watershed_recommendations,
+
+        }
+
+
+        st.session_state[
+            "result"
+        ] = result
+
+
+        if farmer_name or village:
+
+            try:
+
+                save_assessment(
+
+                    farmer_name,
+
+                    village,
+
+                    result,
+
+                )
+
+            except Exception:
+
+                pass
+
+
+        st.rerun()
+
+
+# ============================================================
+# RESULTS
+# ============================================================
+
+if st.session_state[
+    "result"
+]:
+
+    r = st.session_state[
+        "result"
+    ]
+
+
+    st.markdown("---")
+
+
+    st.header(
+        "✅ Your RWH Recommendation"
+    )
+
+
+    # ========================================================
+    # MAIN STRUCTURE FIRST
+    # ========================================================
+
+    if r[
+        "farmer_recommendations"
+    ]:
+
+        best_structure = (
+            r[
+                "farmer_recommendations"
+            ][0]
+        )
+
+
+        st.success(
+
+            f"""
+### 🏗️ Recommended Structure
+
+**{best_structure[0]}**
+
+{best_structure[1]}
+"""
+        )
+
+
+    # ========================================================
+    # BASIC RESULTS
+    # ========================================================
+
+    st.subheader(
+        "📍 Farm"
+    )
+
+
+    st.metric(
+
+        "Farm Area",
+
+        f"{r['field_area_ha']:.3f} ha",
+
+    )
+
+
+    st.metric(
+
+        "Land Use",
+
+        r[
+            "dominant_lulc_name"
+        ]
+
+        or
+
+        "Not available",
+
+    )
+
+
+    # ========================================================
+    # WATER
+    # ========================================================
+
+    st.subheader(
+        "💧 Water Availability"
+    )
+
+
+    st.metric(
+
+        "Annual Runoff",
+
+        (
+
+            f"{r['field_runoff_mm']:.1f} mm"
+
+            if np.isfinite(
+                r["field_runoff_mm"]
+            )
+
+            else "No data"
+
+        ),
+
+    )
+
+
+    st.metric(
+
+        "Annual Available Water",
+
+        (
+
+            f"{r['field_runoff_m3']:,.0f} m³"
+
+            if np.isfinite(
+                r["field_runoff_m3"]
+            )
+
+            else "No data"
+
+        ),
+
+    )
+
+
+    st.metric(
+
+        "75% Dependable Water",
+
+        (
+
+            f"{r['field_dependable_m3']:,.0f} m³"
+
+            if np.isfinite(
+                r["field_dependable_m3"]
+            )
+
+            else "No data"
+
+        ),
+
+    )
+
+
+    # ========================================================
+    # SITE CHARACTERISTICS
+    # ========================================================
+
+    with st.expander(
+        "📊 Detailed Site Information"
+    ):
+
+        st.metric(
+
+            "Watershed Area",
+
+            f"{r['watershed_area_ha']:.2f} ha",
+
+        )
+
+
+        st.metric(
+
+            "CN-II",
+
+            (
+
+                f"{r['field_cn']:.1f}"
+
+                if np.isfinite(
+                    r["field_cn"]
+                )
+
+                else "No data"
+
+            ),
+
+        )
+
+
+        st.metric(
+
+            "Mean Slope",
+
+            (
+
+                f"{r['field_slope']:.2f}%"
+
+                if np.isfinite(
+                    r["field_slope"]
+                )
+
+                else "No data"
+
+            ),
+
+        )
+
+
+        st.metric(
+
+            "Runoff Coefficient",
+
+            (
+
+                f"{r['field_runoff_coeff']:.3f}"
+
+                if np.isfinite(
+                    r["field_runoff_coeff"]
+                )
+
+                else "No data"
+
+            ),
+
+        )
+
+
+        st.metric(
+
+            "Distance to Stream",
+
+            (
+
+                f"{r['field_stream_distance_m']:.0f} m"
+
+                if r[
+                    "field_stream_distance_m"
+                ]
+                is not None
+
+                else "Not available"
+
+            ),
+
+        )
+
+
+    # ========================================================
+    # OTHER STRUCTURES
+    # ========================================================
+
+    if len(
+        r[
+            "farmer_recommendations"
+        ]
+    ) > 1:
+
+        with st.expander(
+            "🏗️ Alternative RWH Options"
+        ):
+
+            for (
+                structure,
+                reason
+            ) in r[
+                "farmer_recommendations"
+            ][1:]:
+
+                st.info(
+
+                    f"**{structure}**\n\n"
+                    f"{reason}"
+
+                )
+
+
+    # ========================================================
+    # WATERSHED TREATMENTS
+    # ========================================================
+
+    with st.expander(
+        "🌊 Watershed Treatment Recommendations"
+    ):
+
+        for (
+            structure,
+            reason
+        ) in r[
+            "watershed_recommendations"
+        ]:
+
+            st.info(
+
+                f"**{structure}**\n\n"
+                f"{reason}"
+
+            )
+
+
+    # ========================================================
+    # LULC
+    # ========================================================
+
+    with st.expander(
+        "🌾 Land Use Details"
+    ):
+
+        st.markdown(
+            "**Farm LULC**"
+        )
+
+
+        if r[
+            "field_lulc_composition"
+        ]:
+
+            st.dataframe(
+
+                r[
+                    "field_lulc_composition"
+                ],
+
+                use_container_width=True,
+
+                hide_index=True,
+
+            )
+
+
+        st.markdown(
+            "**Watershed LULC**"
+        )
+
+
+        if r[
+            "watershed_lulc_composition"
+        ]:
+
+            st.dataframe(
+
+                r[
+                    "watershed_lulc_composition"
+                ],
+
+                use_container_width=True,
+
+                hide_index=True,
+
+            )
+
+
+    # ========================================================
+    # EXISTING STRUCTURES
+    # ========================================================
+
+    with st.expander(
+        "📍 Existing / Proposed Structures Nearby"
+    ):
+
+        if r[
+            "nearest_mgnrega"
+        ]:
+
+            st.write(
+
+                "Nearest MGNREGA structure: "
+
+                f"**{r['nearest_mgnrega']['distance_m']:.0f} m**"
+
+            )
+
+
+        if r[
+            "nearest_final_site"
+        ]:
+
+            st.write(
+
+                "Nearest proposed RWH site: "
+
+                f"**{r['nearest_final_site']['distance_m']:.0f} m**"
+
+            )
+
+
+        if r[
+            "nearest_published"
+        ]:
+
+            st.write(
+
+                "Nearest published candidate: "
+
+                f"**{r['nearest_published']['distance_m']:.0f} m**"
+
+            )
+
+
+    # ========================================================
+    # REPORT
     # ========================================================
 
     try:
@@ -2485,24 +2343,24 @@ detailed survey and engineering design.
 
             village,
 
-            result
+            r,
 
         )
 
 
         st.download_button(
 
-            "📄 Download RWH Assessment Report",
+            "📄 Download Farmer RWH Report",
 
             data=pdf,
 
             file_name=(
-                "RiBhoi_RWH_GIS_DSS_Report.pdf"
+                "RiBhoi_RWH_Farmer_Report.pdf"
             ),
 
             mime="application/pdf",
 
-            use_container_width=True
+            use_container_width=True,
 
         )
 
@@ -2511,6 +2369,37 @@ detailed survey and engineering design.
 
         st.warning(
 
-            f"PDF report could not be generated: {error}"
+            f"Report generation error: {error}"
 
         )
+
+
+    st.warning(
+        """
+The DSS provides planning-level recommendations.
+
+Final RWH structure dimensions, embankment,
+spillway, foundation and hydraulic design
+must be verified through field investigation.
+"""
+    )
+
+
+# ============================================================
+# RESET EVERYTHING
+# ============================================================
+
+st.markdown("---")
+
+
+if st.button(
+
+    "🔄 Start New Farmer Assessment",
+
+    use_container_width=True,
+
+):
+
+    clear_field()
+
+    st.rerun()

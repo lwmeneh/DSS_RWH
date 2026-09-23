@@ -1,0 +1,20 @@
+:root{
+  --primary:#0B5D6B;
+  --dark:#073642;
+  --accent:#1487A8;
+  --green:#1B8A5A;
+  --orange:#E68A00;
+  --bg:#F3F8FA;
+  --border:#D9E6EA;
+}
+.stApp{background:linear-gradient(180deg,var(--bg),#fff 48%);}
+[data-testid="stSidebar"]{background:linear-gradient(180deg,var(--dark),var(--primary));}
+[data-testid="stSidebar"] *{color:white;}
+.hero{padding:24px 28px;border-radius:18px;background:linear-gradient(120deg,var(--dark),var(--accent));color:white;margin-bottom:16px;box-shadow:0 8px 24px rgba(0,0,0,.08);}
+.hero-title{font-size:30px;font-weight:800;}
+.hero-subtitle{margin-top:6px;opacity:.95;}
+.good-card,.warn-card,.info-card{background:white;border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin:8px 0;}
+.good-card{border-left:5px solid var(--green);}
+.warn-card{border-left:5px solid var(--orange);}
+.info-card{border-left:5px solid var(--accent);}
+div[data-testid="stMetric"]{background:white;border:1px solid var(--border);border-radius:14px;padding:12px;}

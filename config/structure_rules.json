@@ -1,0 +1,23 @@
+{
+  "offstream_diversion_max_m": 50,
+  "offstream_pond_max_m": 200,
+  "farm_pond": {
+    "max_mean_slope_pct": 8,
+    "min_runoff_mm": 100
+  },
+  "recharge_pond": {
+    "max_mean_slope_pct": 10,
+    "max_cn": 80
+  },
+  "contour_trench": {
+    "min_slope_pct": 8,
+    "max_slope_pct": 20
+  },
+  "staggered_trench": {
+    "min_slope_pct": 20
+  },
+  "small_collection_pit": {
+    "max_field_area_ha": 2,
+    "min_runoff_mm": 100
+  }
+}

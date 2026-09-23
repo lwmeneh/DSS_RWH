@@ -7,6 +7,6 @@ geopandas
 rasterio
 shapely
 pyproj
-fiona
+pyogrio
 pysheds
 reportlab

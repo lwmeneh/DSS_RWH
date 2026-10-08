@@ -1,55 +1,164 @@
 # ============================================================
 # RI BHOI RAINWATER HARVESTING GIS DSS
-# MOBILE-FIRST FARMER FIELD + WATERSHED ASSESSMENT
+# ICAR RESEARCH COMPLEX FOR NEH REGION
+# UMIAM, MEGHALAYA
+#
+# FARMER FIELD -> AUTOMATIC FARM-POND SITE ->
+# WATER AVAILABILITY -> PRELIMINARY DESIGN ->
+# SEEPAGE/LINING GUIDANCE
 # ============================================================
 
+from pathlib import Path
+import math
+
 import numpy as np
+import pandas as pd
 import geopandas as gpd
+
+import rasterio
+from rasterio.mask import mask as rio_mask
+from rasterio.transform import xy
+
 import streamlit as st
 import folium
 
-from shapely.geometry import shape
-from folium.plugins import Draw, Fullscreen, MeasureControl
-from streamlit_folium import st_folium
-
-from config.settings import *
-from database.db import initialize, save_assessment
-from data.loader import load_vectors
-from gis.spatial import (
-    nearest_feature,
-    zonal_stats,
-    band_index_by_name,
+from shapely.geometry import (
+    shape,
+    mapping,
+    Point,
 )
-from reports.pdf_report import make_pdf
-from utils.ui import load_css, render_html
+
+from pyproj import Transformer
+
+from folium.plugins import (
+    Draw,
+    Fullscreen,
+    MeasureControl,
+)
+
+from streamlit_folium import st_folium
 
 
 # ============================================================
-# PAGE CONFIG
+# 1. PAGE SETTINGS
 # ============================================================
 
 st.set_page_config(
-    page_title=APP_SHORT_NAME,
+    page_title="ICAR Ri Bhoi RWH GIS DSS",
     page_icon="💧",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+
+# ============================================================
+# 2. PROJECT PATHS
+# ============================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+CACHE_DIR = BASE_DIR / "data" / "cache"
+
+
+# ----------------------------
+# 10-factor extracted rasters
+# ----------------------------
+
+GEOLOGY_RASTER = CACHE_DIR / "01_Geology.tif"
+GEOMORPH_RASTER = CACHE_DIR / "02_Geomorphology.tif"
+SLOPE_RASTER = CACHE_DIR / "03_Slope.tif"
+RAINFALL_RASTER = CACHE_DIR / "04_Rainfall.tif"
+ELEVATION_RASTER = CACHE_DIR / "05_Elevation.tif"
+DRAINAGE_DENSITY_RASTER = CACHE_DIR / "06_DrainageDensity.tif"
+LULC_RANK_RASTER = CACHE_DIR / "07_LULC.tif"
+LINEAMENT_DENSITY_RASTER = CACHE_DIR / "08_LineamentDensity.tif"
+SOIL_RASTER = CACHE_DIR / "09_Soil.tif"
+TWI_RASTER = CACHE_DIR / "10_TWI.tif"
+
+
+# ----------------------------
+# Hydrology
+# ----------------------------
+
+FLOW_ACCUMULATION_RASTER = (
+    CACHE_DIR / "flow_accumulation.tif"
+)
+
+CN_RASTER = (
+    CACHE_DIR / "CN_II.tif"
+)
+
+MEAN_RUNOFF_RASTER = (
+    CACHE_DIR / "mean_runoff_mm.tif"
+)
+
+DEPENDABLE_RUNOFF_RASTER = (
+    CACHE_DIR / "dependable_runoff_mm.tif"
+)
+
+RUNOFF_COEFFICIENT_RASTER = (
+    CACHE_DIR / "runoff_coefficient.tif"
+)
+
+
+# ----------------------------
+# Vector layers
+# ----------------------------
+
+BOUNDARY_GPKG = (
+    CACHE_DIR / "boundary_utm46.gpkg"
+)
+
+STREAMS_GPKG = (
+    CACHE_DIR / "streams_utm46.gpkg"
+)
+
+LULC_GPKG = (
+    CACHE_DIR
+    / "lulc_2021_10k_clean_utm46.gpkg"
+)
+
+MGNREGA_GPKG = (
+    CACHE_DIR / "mgnrega_utm46.gpkg"
+)
+
+FINAL94_GPKG = (
+    CACHE_DIR / "final94_utm46.gpkg"
+)
+
+PUBLISHED_GPKG = (
+    CACHE_DIR / "published_sites_utm46.gpkg"
+)
+
+
+WORKING_CRS = "EPSG:32646"
+
+MAP_CENTER = [
+    25.88,
+    91.88,
+]
+
+MAP_ZOOM = 10
+
+
+# ============================================================
+# 3. MOBILE CSS
+# ============================================================
 
 st.markdown(
     """
 <style>
 
 .block-container {
-    padding-top: 0.5rem;
-    padding-left: 0.6rem;
-    padding-right: 0.6rem;
+    padding-top: 0.4rem;
+    padding-left: 0.65rem;
+    padding-right: 0.65rem;
     padding-bottom: 3rem;
 }
 
 .stButton > button,
 .stDownloadButton > button {
     width: 100%;
-    min-height: 55px;
+    min-height: 54px;
     border-radius: 12px;
     font-size: 17px;
     font-weight: 650;
@@ -57,29 +166,33 @@ st.markdown(
 
 [data-testid="stMetric"] {
     background: white;
-    border: 1px solid #dce7eb;
+    border: 1px solid #d8e5e8;
     border-radius: 12px;
     padding: 10px;
 }
 
 .card {
     background: white;
-    border: 1px solid #dce7eb;
+    border: 1px solid #d8e5e8;
     border-radius: 12px;
-    padding: 13px;
+    padding: 14px;
     margin: 8px 0;
 }
 
-.card-green {
+.green-card {
     border-left: 5px solid #159957;
 }
 
-.card-blue {
-    border-left: 5px solid #138aa5;
+.blue-card {
+    border-left: 5px solid #1976D2;
 }
 
-.card-orange {
-    border-left: 5px solid #ee9800;
+.orange-card {
+    border-left: 5px solid #EF6C00;
+}
+
+.red-card {
+    border-left: 5px solid #C62828;
 }
 
 @media only screen and (max-width: 768px) {
@@ -94,11 +207,11 @@ st.markdown(
     }
 
     h2 {
-        font-size: 1.22rem !important;
+        font-size: 1.20rem !important;
     }
 
     h3 {
-        font-size: 1.08rem !important;
+        font-size: 1.05rem !important;
     }
 
     .stButton > button,
@@ -110,6 +223,7 @@ st.markdown(
     [data-testid="stMetricValue"] {
         font-size: 1.18rem !important;
     }
+
 }
 
 </style>
@@ -117,60 +231,111 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-load_css()
-initialize()
-
 
 # ============================================================
-# ADDITIONAL RASTER PATHS
+# 4. INSTITUTIONAL HEADER
 # ============================================================
 
-RAINFALL_RASTER = (
-    CACHE_DIR
-    / "mean_rainfall_mm.tif"
+st.markdown(
+    """
+<div style="
+background:linear-gradient(120deg,#064c44,#087c6c);
+padding:20px;
+border-radius:16px;
+color:white;
+text-align:center;
+margin-bottom:14px;
+">
+
+<div style="
+font-size:14px;
+font-weight:600;
+letter-spacing:0.4px;
+">
+INDIAN COUNCIL OF AGRICULTURAL RESEARCH
+</div>
+
+<div style="
+font-size:26px;
+font-weight:800;
+margin-top:4px;
+">
+ICAR Research Complex for NEH Region
+</div>
+
+<div style="
+font-size:17px;
+margin-top:3px;
+">
+Umiam, Meghalaya
+</div>
+
+<hr style="
+border:none;
+border-top:1px solid rgba(255,255,255,0.35);
+">
+
+<div style="
+font-size:23px;
+font-weight:750;
+">
+💧 Rainwater Harvesting GIS Decision Support System
+</div>
+
+<div style="
+font-size:15px;
+margin-top:5px;
+">
+Farmer-Level Farm Pond Siting & Preliminary Design
+<br>
+Ri Bhoi District, Meghalaya
+</div>
+
+</div>
+""",
+    unsafe_allow_html=True,
 )
 
-STREAM_ORDER_RASTER = (
-    CACHE_DIR
-    / "stream_order_30m.tif"
-)
-
 
 # ============================================================
-# REQUIRED FILE CHECK
+# 5. REQUIRED DATA CHECK
 # ============================================================
 
-required = [
+REQUIRED_FILES = [
 
-    CORE_STACK,
+    GEOLOGY_RASTER,
+    GEOMORPH_RASTER,
+    SLOPE_RASTER,
+    RAINFALL_RASTER,
+    ELEVATION_RASTER,
+    DRAINAGE_DENSITY_RASTER,
+    LINEAMENT_DENSITY_RASTER,
+    SOIL_RASTER,
+    TWI_RASTER,
+
+    FLOW_ACCUMULATION_RASTER,
 
     CN_RASTER,
-
-    RAINFALL_RASTER,
-
     MEAN_RUNOFF_RASTER,
-
     DEPENDABLE_RUNOFF_RASTER,
-
-    RUNOFF_COEFF_RASTER,
-
-    STREAM_ORDER_RASTER,
-
-    STREAMS_GPKG,
+    RUNOFF_COEFFICIENT_RASTER,
 
     BOUNDARY_GPKG,
+    STREAMS_GPKG,
 ]
 
+
 missing = [
-    str(path)
-    for path in required
-    if not path.exists()
+    str(p.relative_to(BASE_DIR))
+    for p in REQUIRED_FILES
+    if not p.exists()
 ]
+
 
 if missing:
 
     st.error(
-        "Required GIS cache is incomplete."
+        "Required GIS files are missing."
     )
 
     st.code(
@@ -181,81 +346,107 @@ if missing:
 
 
 # ============================================================
-# LOAD VECTOR DATA
+# 6. LOAD VECTOR DATA
 # ============================================================
 
-DATA = load_vectors()
+@st.cache_resource
+def read_vector(path):
 
-streams_utm = DATA.get(
-    "streams"
+    if not path.exists():
+        return None
+
+    try:
+
+        gdf = gpd.read_file(
+            path
+        )
+
+        if gdf.crs is None:
+            gdf = gdf.set_crs(
+                WORKING_CRS
+            )
+
+        return gdf
+
+    except Exception:
+
+        return None
+
+
+boundary_utm = read_vector(
+    BOUNDARY_GPKG
 )
 
-boundary_utm = DATA.get(
-    "boundary"
+streams_utm = read_vector(
+    STREAMS_GPKG
 )
 
-mgnrega_utm = DATA.get(
-    "mgnrega"
+lulc_utm = read_vector(
+    LULC_GPKG
 )
 
-final94_utm = DATA.get(
-    "final94"
+mgnrega_utm = read_vector(
+    MGNREGA_GPKG
 )
 
-published_utm = DATA.get(
-    "published"
+final94_utm = read_vector(
+    FINAL94_GPKG
 )
 
-lulc_utm = DATA.get(
-    "lulc"
+published_utm = read_vector(
+    PUBLISHED_GPKG
 )
 
-boundary_wgs = (
-    boundary_utm
-    .to_crs(
-        "EPSG:4326"
+
+boundary_wgs = None
+
+if (
+    boundary_utm is not None
+    and
+    not boundary_utm.empty
+):
+
+    boundary_wgs = (
+        boundary_utm
+        .to_crs(
+            "EPSG:4326"
+        )
     )
-)
 
 
 # ============================================================
-# SESSION STATE
+# 7. SESSION STATE
 # ============================================================
 
-defaults = {
+STATE_DEFAULTS = {
 
     "field_geometry":
         None,
 
-    "watershed_geometry":
+    "current_lulc":
         None,
 
-    "result":
+    "assessment":
         None,
 }
 
-for key, value in defaults.items():
 
-    st.session_state.setdefault(
-        key,
-        value,
-    )
+for key, value in STATE_DEFAULTS.items():
+
+    if key not in st.session_state:
+
+        st.session_state[
+            key
+        ] = value
 
 
 # ============================================================
-# DRAWN POLYGON
+# 8. GEOMETRY HELPERS
 # ============================================================
 
 def get_last_polygon(
     map_data
 ):
-
-    """
-    Only polygons created with Leaflet Draw
-    are accepted.
-
-    Ordinary mobile taps/clicks are ignored.
-    """
 
     if not map_data:
         return None
@@ -274,26 +465,42 @@ def get_last_polygon(
         if not drawing:
             continue
 
-        geometry = drawing.get(
+        geom = drawing.get(
             "geometry",
             {}
         )
 
-        if geometry.get(
+        if geom.get(
             "type"
         ) in [
             "Polygon",
             "MultiPolygon",
         ]:
 
-            polygon = geometry
+            polygon = geom
 
     return polygon
 
 
-# ============================================================
-# GEOMETRY
-# ============================================================
+def geometry_gdf(
+    geometry_geojson,
+    crs="EPSG:4326",
+):
+
+    return gpd.GeoDataFrame(
+
+        {"id": [1]},
+
+        geometry=[
+            shape(
+                geometry_geojson
+            )
+        ],
+
+        crs=crs,
+
+    )
+
 
 def to_utm_geometry(
     geometry_geojson
@@ -301,29 +508,20 @@ def to_utm_geometry(
 
     return (
 
-        gpd.GeoDataFrame(
-
-            geometry=[
-                shape(
-                    geometry_geojson
-                )
-            ],
-
-            crs="EPSG:4326",
-
+        geometry_gdf(
+            geometry_geojson
         )
 
         .to_crs(
             WORKING_CRS
         )
 
-        .geometry
-        .iloc[0]
+        .geometry.iloc[0]
 
     )
 
 
-def calculate_area_ha(
+def field_area_ha(
     geometry_geojson
 ):
 
@@ -337,7 +535,7 @@ def calculate_area_ha(
     )
 
 
-def geometry_center(
+def field_center_wgs84(
     geometry_geojson
 ):
 
@@ -345,236 +543,408 @@ def geometry_center(
         geometry_geojson
     )
 
-    centroid = geom.centroid
+    c = geom.centroid
 
-    point = (
+    gs = (
 
         gpd.GeoSeries(
-
-            [centroid],
-
+            [c],
             crs=WORKING_CRS,
-
         )
 
         .to_crs(
             "EPSG:4326"
         )
 
-        .iloc[0]
-
     )
 
+    p = gs.iloc[0]
+
     return [
-
-        float(
-            point.y
-        ),
-
-        float(
-            point.x
-        ),
+        float(p.y),
+        float(p.x),
     ]
 
 
 # ============================================================
-# LULC CLIPPING
+# 9. SAFE RASTER STATISTICS
 # ============================================================
 
-def clipped_lulc(
+def safe_raster_stats(
+    raster_path,
+    polygon_geojson,
+    centroid_fallback=True,
+):
+
+    polygon = geometry_gdf(
+        polygon_geojson
+    )
+
+    with rasterio.open(
+        raster_path
+    ) as src:
+
+        if src.crs is None:
+
+            return {
+                "mean": np.nan,
+                "median": np.nan,
+                "min": np.nan,
+                "max": np.nan,
+            }
+
+        polygon_raster = (
+            polygon.to_crs(
+                src.crs
+            )
+        )
+
+        geom = (
+            polygon_raster
+            .geometry.iloc[0]
+        )
+
+        values = np.array([])
+
+        try:
+
+            clipped, _ = rio_mask(
+
+                src,
+
+                [
+                    mapping(
+                        geom
+                    )
+                ],
+
+                crop=True,
+
+                indexes=1,
+
+                filled=False,
+
+                all_touched=True,
+
+            )
+
+
+            if np.ma.isMaskedArray(
+                clipped
+            ):
+
+                values = (
+                    clipped
+                    .compressed()
+                )
+
+            else:
+
+                values = (
+                    clipped
+                    .reshape(-1)
+                )
+
+
+            values = values[
+                np.isfinite(
+                    values
+                )
+            ]
+
+
+            if src.nodata is not None:
+
+                values = values[
+                    values
+                    != src.nodata
+                ]
+
+
+        except Exception:
+
+            values = np.array([])
+
+
+        # Small-field fallback
+
+        if (
+            len(values) == 0
+            and
+            centroid_fallback
+        ):
+
+            centroid = (
+                geom.centroid
+            )
+
+            try:
+
+                sampled = next(
+
+                    src.sample(
+                        [
+                            (
+                                centroid.x,
+                                centroid.y,
+                            )
+                        ],
+                        indexes=1,
+                        masked=True,
+                    )
+
+                )
+
+                values = np.asarray(
+                    sampled
+                ).reshape(-1)
+
+                values = values[
+                    np.isfinite(
+                        values
+                    )
+                ]
+
+            except Exception:
+
+                values = np.array([])
+
+
+        if len(values) == 0:
+
+            return {
+                "mean": np.nan,
+                "median": np.nan,
+                "min": np.nan,
+                "max": np.nan,
+            }
+
+
+        return {
+
+            "mean":
+                float(
+                    np.mean(
+                        values
+                    )
+                ),
+
+            "median":
+                float(
+                    np.median(
+                        values
+                    )
+                ),
+
+            "min":
+                float(
+                    np.min(
+                        values
+                    )
+                ),
+
+            "max":
+                float(
+                    np.max(
+                        values
+                    )
+                ),
+        }
+
+
+# ============================================================
+# 10. POINT RASTER SAMPLING
+# ============================================================
+
+def sample_raster_at_xy(
+    raster_path,
+    x,
+    y,
+    point_crs=WORKING_CRS,
+):
+
+    with rasterio.open(
+        raster_path
+    ) as src:
+
+        transformer = Transformer.from_crs(
+            point_crs,
+            src.crs,
+            always_xy=True,
+        )
+
+        rx, ry = transformer.transform(
+            x,
+            y,
+        )
+
+        try:
+
+            value = next(
+
+                src.sample(
+                    [(rx, ry)],
+                    indexes=1,
+                    masked=True,
+                )
+
+            )[0]
+
+            if np.ma.is_masked(
+                value
+            ):
+
+                return np.nan
+
+            value = float(
+                value
+            )
+
+            if not np.isfinite(
+                value
+            ):
+
+                return np.nan
+
+            return value
+
+        except Exception:
+
+            return np.nan
+
+
+# ============================================================
+# 11. LULC FROM DETAILED VECTOR
+# ============================================================
+
+def mapped_lulc_summary(
     polygon_geojson
 ):
 
-    """
-    Clip LULC strictly to farmer/watershed polygon.
-    """
-
     if (
-
         lulc_utm is None
-
-        or lulc_utm.empty
-
+        or
+        lulc_utm.empty
     ):
 
-        return None
+        return []
 
 
-    selected = gpd.GeoDataFrame(
-
-        {
-            "selection_id":
-                [1]
-        },
-
-        geometry=[
-
-            shape(
-                polygon_geojson
-            )
-
-        ],
-
-        crs="EPSG:4326",
-
-    )
-
-
-    selected = selected.to_crs(
-        WORKING_CRS
-    )
-
-
-    lulc = lulc_utm.copy()
-
-
-    if lulc.crs != selected.crs:
-
-        lulc = lulc.to_crs(
-            selected.crs
+    selected = (
+        geometry_gdf(
+            polygon_geojson
         )
+        .to_crs(
+            lulc_utm.crs
+        )
+    )
 
 
-    selected_geom = (
-        selected.geometry.iloc[0]
+    geom = (
+        selected
+        .geometry
+        .iloc[0]
     )
 
 
     ids = list(
 
-        lulc.sindex.intersection(
-
-            selected_geom.bounds
-
+        lulc_utm
+        .sindex
+        .intersection(
+            geom.bounds
         )
 
     )
 
 
     if not ids:
+        return []
 
-        return None
 
-
-    candidate = (
-        lulc
+    candidates = (
+        lulc_utm
         .iloc[ids]
         .copy()
     )
 
 
-    candidate = candidate[
-
-        candidate.intersects(
-            selected_geom
+    candidates = candidates[
+        candidates.intersects(
+            geom
         )
-
     ].copy()
 
 
-    if candidate.empty:
-
-        return None
+    if candidates.empty:
+        return []
 
 
     try:
 
-        candidate[
+        candidates[
             "geometry"
         ] = (
-            candidate
+            candidates
             .geometry
             .make_valid()
         )
 
     except Exception:
 
-        candidate[
+        candidates[
             "geometry"
         ] = (
-            candidate
+            candidates
             .geometry
             .buffer(0)
         )
 
 
-    clipped = gpd.overlay(
-
-        candidate,
-
-        selected,
-
-        how="intersection",
-
-        keep_geom_type=True,
-
-        make_valid=True,
-
+    candidates[
+        "clip_geom"
+    ] = (
+        candidates
+        .geometry
+        .intersection(
+            geom
+        )
     )
 
 
-    if clipped.empty:
-
-        return None
-
-
-    clipped = clipped[
-
-        clipped.geometry.notna()
-
-        &
-
-        (~clipped.geometry.is_empty)
-
+    candidates = candidates[
+        ~candidates[
+            "clip_geom"
+        ].is_empty
     ].copy()
 
 
-    clipped[
+    if candidates.empty:
+        return []
+
+
+    candidates[
         "area_m2"
-    ] = (
-        clipped.geometry.area
-    )
-
-
-    return clipped
-
-
-# ============================================================
-# LULC SUMMARY
-# ============================================================
-
-def lulc_summary(
-    polygon_geojson
-):
-
-    clipped = clipped_lulc(
-        polygon_geojson
-    )
+    ] = candidates[
+        "clip_geom"
+    ].area
 
 
     if (
-
-        clipped is None
-
-        or clipped.empty
-
+        "LULC_2022"
+        not in
+        candidates.columns
     ):
 
         return []
 
 
-    if "LULC_2022" not in clipped.columns:
+    grouped = (
 
-        return []
-
-
-    summary = (
-
-        clipped
+        candidates
 
         .groupby(
-            "LULC_2022",
-            dropna=False,
+            "LULC_2022"
         )["area_m2"]
 
         .sum()
@@ -585,51 +955,43 @@ def lulc_summary(
 
 
     total = float(
-        summary[
+        grouped[
             "area_m2"
         ].sum()
     )
 
 
     if total <= 0:
-
         return []
 
 
-    summary[
+    grouped[
         "area_ha"
     ] = (
-
-        summary[
+        grouped[
             "area_m2"
         ]
-
         / 10000.0
-
     )
 
 
-    summary[
+    grouped[
         "percent"
     ] = (
-
-        summary[
+        grouped[
             "area_m2"
         ]
-
         / total
-
         * 100.0
-
     )
 
 
-    summary = summary.sort_values(
-
-        "percent",
-
-        ascending=False,
-
+    grouped = (
+        grouped
+        .sort_values(
+            "percent",
+            ascending=False,
+        )
     )
 
 
@@ -657,606 +1019,1625 @@ def lulc_summary(
                         "percent"
                     ]
                 ),
+
         }
 
         for _, row
-        in summary.iterrows()
+        in grouped.iterrows()
 
     ]
 
 
 # ============================================================
-# LULC DISPLAY
+# 12. NEAREST VECTOR DISTANCE
 # ============================================================
 
-def lulc_display_geojson(
-    polygon_geojson
+def nearest_distance(
+    polygon_geojson,
+    gdf,
 ):
 
-    clipped = clipped_lulc(
-        polygon_geojson
-    )
-
     if (
-
-        clipped is None
-
-        or clipped.empty
-
+        gdf is None
+        or
+        gdf.empty
     ):
 
         return None
 
 
-    clipped = clipped.to_crs(
-        "EPSG:4326"
-    )
-
-    return (
-        clipped
-        .__geo_interface__
-    )
-
-
-# ============================================================
-# NEAREST STREAM
-# ============================================================
-
-def nearest_stream_distance(
-    polygon_geojson
-):
-
-    if (
-
-        streams_utm is None
-
-        or streams_utm.empty
-
-    ):
-
-        return None
-
-
-    geom = to_utm_geometry(
-        polygon_geojson
-    )
-
-
-    distance = (
-
-        streams_utm
-        .geometry
-        .distance(
-            geom
+    field_geom = (
+        geometry_gdf(
+            polygon_geojson
         )
 
+        .to_crs(
+            gdf.crs
+        )
+
+        .geometry.iloc[0]
     )
 
 
-    if distance.empty:
+    dist = (
+        gdf
+        .geometry
+        .distance(
+            field_geom
+        )
+    )
+
+
+    if dist.empty:
 
         return None
 
 
     return float(
-        distance.min()
+        dist.min()
     )
 
 
 # ============================================================
-# LOCAL STREAMS FOR MAP
+# 13. NORMALIZATION
 # ============================================================
 
-def local_streams(
-    polygon_geojson,
-    buffer_m=2500,
+def normalize_array(
+    array,
+    valid_mask,
 ):
 
+    values = array[
+        valid_mask
+    ]
+
+
+    values = values[
+        np.isfinite(
+            values
+        )
+    ]
+
+
+    if values.size == 0:
+
+        return np.zeros_like(
+            array,
+            dtype=float,
+        )
+
+
+    lo = np.percentile(
+        values,
+        5
+    )
+
+    hi = np.percentile(
+        values,
+        95
+    )
+
+
     if (
-
-        streams_utm is None
-
-        or streams_utm.empty
-
+        not np.isfinite(lo)
+        or
+        not np.isfinite(hi)
+        or
+        hi <= lo
     ):
 
-        return None
+        return np.zeros_like(
+            array,
+            dtype=float,
+        )
 
 
-    geom = to_utm_geometry(
-        polygon_geojson
+    normalized = (
+        array - lo
+    ) / (
+        hi - lo
     )
 
 
-    search_area = (
-        geom.buffer(
-            buffer_m
+    return np.clip(
+        normalized,
+        0,
+        1,
+    )
+
+
+# ============================================================
+# 14. READ FIELD ARRAY
+# ============================================================
+
+def crop_raster_to_field(
+    raster_path,
+    field_geojson,
+):
+
+    polygon = geometry_gdf(
+        field_geojson
+    )
+
+
+    with rasterio.open(
+        raster_path
+    ) as src:
+
+        geom = (
+
+            polygon
+
+            .to_crs(
+                src.crs
+            )
+
+            .geometry.iloc[0]
+
+        )
+
+
+        data, transform = rio_mask(
+
+            src,
+
+            [
+                mapping(
+                    geom
+                )
+            ],
+
+            crop=True,
+
+            indexes=1,
+
+            filled=False,
+
+            all_touched=True,
+
+        )
+
+
+        if np.ma.isMaskedArray(
+            data
+        ):
+
+            array = (
+                data
+                .filled(
+                    np.nan
+                )
+                .astype(float)
+            )
+
+            mask = (
+                ~data.mask
+            )
+
+        else:
+
+            array = (
+                data
+                .astype(float)
+            )
+
+            mask = np.isfinite(
+                array
+            )
+
+
+        return (
+            array,
+            mask,
+            transform,
+            src.crs,
+        )
+
+
+# ============================================================
+# 15. AUTOMATIC POND SITE SELECTION
+# ============================================================
+
+def find_pond_sites(
+    field_geojson,
+    minimum_boundary_clearance=10.0,
+):
+
+    elev, elev_mask, transform, raster_crs = (
+        crop_raster_to_field(
+            ELEVATION_RASTER,
+            field_geojson,
         )
     )
 
 
-    ids = list(
-
-        streams_utm
-        .sindex
-        .intersection(
-            search_area.bounds
+    slope, slope_mask, _, _ = (
+        crop_raster_to_field(
+            SLOPE_RASTER,
+            field_geojson,
         )
-
     )
 
 
-    if not ids:
+    twi, twi_mask, _, _ = (
+        crop_raster_to_field(
+            TWI_RASTER,
+            field_geojson,
+        )
+    )
+
+
+    dd, dd_mask, _, _ = (
+        crop_raster_to_field(
+            DRAINAGE_DENSITY_RASTER,
+            field_geojson,
+        )
+    )
+
+
+    # Flow accumulation may not have identical crop shape.
+    # Use only if aligned.
+
+    flowacc = None
+    flow_mask = None
+
+    try:
+
+        fa, fm, _, _ = (
+            crop_raster_to_field(
+                FLOW_ACCUMULATION_RASTER,
+                field_geojson,
+            )
+        )
+
+        if fa.shape == elev.shape:
+
+            flowacc = fa
+            flow_mask = fm
+
+    except Exception:
+
+        pass
+
+
+    valid = (
+        elev_mask
+        &
+        slope_mask
+        &
+        twi_mask
+        &
+        dd_mask
+        &
+        np.isfinite(elev)
+        &
+        np.isfinite(slope)
+        &
+        np.isfinite(twi)
+        &
+        np.isfinite(dd)
+    )
+
+
+    if valid.sum() == 0:
 
         return None
 
 
-    subset = (
-        streams_utm
-        .iloc[ids]
-        .copy()
+    # ----------------------------------------
+    # Absolute lowest DEM point
+    # ----------------------------------------
+
+    elev_work = np.where(
+        valid,
+        elev,
+        np.inf,
+    )
+
+    low_index = np.unravel_index(
+        np.argmin(
+            elev_work
+        ),
+        elev_work.shape,
     )
 
 
-    subset = subset[
+    low_x, low_y = xy(
+        transform,
+        low_index[0],
+        low_index[1],
+        offset="center",
+    )
 
-        subset.intersects(
-            search_area
+
+    # ----------------------------------------
+    # Suitability score
+    # ----------------------------------------
+
+    elev_norm = normalize_array(
+        elev,
+        valid,
+    )
+
+    slope_norm = normalize_array(
+        slope,
+        valid,
+    )
+
+    twi_norm = normalize_array(
+        twi,
+        valid,
+    )
+
+    dd_norm = normalize_array(
+        dd,
+        valid,
+    )
+
+
+    score = (
+
+        0.45
+        *
+        (
+            1.0
+            -
+            elev_norm
         )
 
-    ].copy()
+        +
+
+        0.25
+        *
+        twi_norm
+
+        +
+
+        0.15
+        *
+        (
+            1.0
+            -
+            slope_norm
+        )
+
+        +
+
+        0.10
+        *
+        dd_norm
+
+    )
 
 
-    if subset.empty:
-
-        return None
+    weight_sum = 0.95
 
 
-    return (
+    if (
+        flowacc is not None
+        and
+        flow_mask is not None
+    ):
 
-        subset
+        flow_valid = (
+            valid
+            &
+            flow_mask
+            &
+            np.isfinite(
+                flowacc
+            )
+        )
+
+
+        # log transform due to highly skewed accumulation
+
+        log_flow = np.log1p(
+            np.maximum(
+                flowacc,
+                0
+            )
+        )
+
+
+        flow_norm = normalize_array(
+            log_flow,
+            flow_valid,
+        )
+
+
+        score = (
+            score
+            +
+            0.05
+            *
+            flow_norm
+        )
+
+        weight_sum += 0.05
+
+
+    score = score / weight_sum
+
+
+    # Preferred pond slopes
+
+    preferred = (
+        valid
+        &
+        (
+            slope
+            <= 8.0
+        )
+    )
+
+
+    if preferred.sum() == 0:
+
+        preferred = (
+            valid
+            &
+            (
+                slope
+                <= 15.0
+            )
+        )
+
+
+    if preferred.sum() == 0:
+
+        preferred = valid
+
+
+    score = np.where(
+        preferred,
+        score,
+        -np.inf,
+    )
+
+
+    # ----------------------------------------
+    # Field geometry in raster CRS
+    # ----------------------------------------
+
+    field_geom = (
+
+        geometry_gdf(
+            field_geojson
+        )
+
         .to_crs(
-            "EPSG:4326"
+            raster_crs
         )
-        .__geo_interface__
+
+        .geometry.iloc[0]
 
     )
 
 
-# ============================================================
-# RWH RECOMMENDATION ENGINE
-# ============================================================
+    # ----------------------------------------
+    # Nearby streams in same CRS
+    # ----------------------------------------
 
-def recommend_structures(
-
-    lulc_name,
-
-    area,
-
-    slope,
-
-    cn,
-
-    runoff,
-
-    dependable_runoff,
-
-    distance_stream,
-
-    stream_order,
-
-):
-
-    recommendations = []
-
-
-    lname = (
-        lulc_name
-        or ""
-    ).lower()
-
-
-    agriculture = any(
-
-        x in lname
-
-        for x in [
-
-            "crop",
-
-            "plantation",
-
-            "shifting cultivation",
-
-        ]
-
-    )
-
-
-    # ========================================================
-    # FARM POND
-    # ========================================================
+    stream_subset = None
 
     if (
-
-        agriculture
-
-        and np.isfinite(
-            slope
-        )
-
-        and slope <= 8
-
-        and np.isfinite(
-            runoff
-        )
-
-        and runoff >= 100
-
+        streams_utm is not None
+        and
+        not streams_utm.empty
     ):
 
-        recommendations.append({
-
-            "structure":
-                "Farm Pond",
-
-            "priority":
-                "High",
-
-            "reason":
-                "Agricultural land, suitable slope and available "
-                "runoff support on-farm water storage.",
-
-            "management":
-                "Provide inlet silt trap, stabilize bunds with "
-                "vegetation, maintain safe overflow and desilt "
-                "before the monsoon. Use stored water primarily "
-                "for protective irrigation.",
-
-        })
-
-
-    # ========================================================
-    # OFF-STREAM FARM POND
-    # ========================================================
-
-    if (
-
-        distance_stream is not None
-
-        and distance_stream <= 200
-
-        and np.isfinite(
-            slope
+        stream_subset = (
+            streams_utm
+            .to_crs(
+                raster_crs
+            )
         )
 
-        and slope <= 10
 
-    ):
+    # ----------------------------------------
+    # Ranked candidate pixels
+    # ----------------------------------------
 
-        recommendations.append({
-
-            "structure":
-                "Off-stream Farm Pond with Controlled Diversion",
-
-            "priority":
-                "High",
-
-            "reason":
-                "The farmer field lies close to a mapped stream "
-                "or drainage line.",
-
-            "management":
-                "Use a controlled diversion only after hydraulic "
-                "verification. Provide sediment trapping and a safe "
-                "overflow without obstructing the natural stream.",
-
-        })
+    flat_order = np.argsort(
+        score.ravel()
+    )[::-1]
 
 
-    # ========================================================
-    # RECHARGE POND
-    # ========================================================
+    best = None
 
-    if (
 
-        np.isfinite(
-            slope
+    for flat_idx in flat_order[:500]:
+
+        r, c = np.unravel_index(
+            flat_idx,
+            score.shape,
         )
 
-        and slope <= 10
 
-        and np.isfinite(
-            cn
+        if not np.isfinite(
+            score[r, c]
+        ):
+
+            continue
+
+
+        px, py = xy(
+            transform,
+            r,
+            c,
+            offset="center",
         )
 
-        and cn <= 80
 
-    ):
-
-        recommendations.append({
-
-            "structure":
-                "Recharge / Percolation Pond",
-
-            "priority":
-                "Moderate",
-
-            "reason":
-                "Gentle terrain and relatively lower Curve Number "
-                "support recharge-oriented treatment.",
-
-            "management":
-                "Maintain the infiltration bed, remove sediment "
-                "periodically and protect recharge water from contamination.",
-
-        })
-
-
-    # ========================================================
-    # CONTOUR TREATMENT
-    # ========================================================
-
-    if (
-
-        np.isfinite(
-            slope
+        pt = Point(
+            px,
+            py,
         )
 
-        and 8 < slope <= 20
 
-    ):
-
-        recommendations.append({
-
-            "structure":
-                "Contour Bund / Contour Trench",
-
-            "priority":
-                "Moderate",
-
-            "reason":
-                "Moderately sloping terrain requires distributed "
-                "runoff interception.",
-
-            "management":
-                "Construct strictly along contour and stabilize "
-                "with grass or suitable vegetative barriers.",
-
-        })
-
-
-    # ========================================================
-    # STEEP TERRAIN
-    # ========================================================
-
-    if (
-
-        np.isfinite(
-            slope
+        boundary_distance = (
+            pt.distance(
+                field_geom.boundary
+            )
         )
 
-        and slope > 20
 
-    ):
+        # Avoid proposed off-stream farm pond
+        # directly over mapped stream.
 
-        recommendations.append({
+        stream_distance = None
 
-            "structure":
-                "Staggered Trench + Vegetative Barrier",
+        if (
+            stream_subset is not None
+            and
+            not stream_subset.empty
+        ):
 
-            "priority":
-                "High",
+            nearby = (
 
-            "reason":
-                "Steep terrain needs distributed runoff and "
-                "erosion management.",
+                stream_subset
+                .geometry
+                .distance(
+                    pt
+                )
 
-            "management":
-                "Avoid large excavations. Use staggered trenches, "
-                "vegetation and erosion-control treatment.",
+            )
 
-        })
+            stream_distance = float(
+                nearby.min()
+            )
 
 
-    # ========================================================
-    # CHECK DAM
-    # ========================================================
+        if (
+            boundary_distance
+            >=
+            minimum_boundary_clearance
+        ):
 
-    if (
+            if (
+                stream_distance is None
+                or
+                stream_distance >= 10.0
+            ):
 
-        stream_order is not None
+                best = {
 
-        and np.isfinite(
-            stream_order
+                    "row":
+                        int(r),
+
+                    "col":
+                        int(c),
+
+                    "x":
+                        float(px),
+
+                    "y":
+                        float(py),
+
+                    "elevation":
+                        float(
+                            elev[r, c]
+                        ),
+
+                    "slope":
+                        float(
+                            slope[r, c]
+                        ),
+
+                    "twi":
+                        float(
+                            twi[r, c]
+                        ),
+
+                    "drainage_density":
+                        float(
+                            dd[r, c]
+                        ),
+
+                    "score":
+                        float(
+                            score[r, c]
+                        ),
+
+                    "boundary_distance":
+                        float(
+                            boundary_distance
+                        ),
+
+                    "stream_distance":
+                        stream_distance,
+
+                }
+
+                if flowacc is not None:
+
+                    value = flowacc[
+                        r,
+                        c
+                    ]
+
+                    if np.isfinite(
+                        value
+                    ):
+
+                        best[
+                            "flow_accumulation"
+                        ] = float(
+                            value
+                        )
+
+                break
+
+
+    # fallback if no point satisfied clearance
+
+    if best is None:
+
+        flat_idx = flat_order[0]
+
+        r, c = np.unravel_index(
+            flat_idx,
+            score.shape,
         )
 
-        and stream_order >= 1
+        px, py = xy(
+            transform,
+            r,
+            c,
+            offset="center",
+        )
 
-    ):
+        best = {
 
-        recommendations.append({
+            "row":
+                int(r),
 
-            "structure":
-                "Check Dam / Gully Control Structure",
+            "col":
+                int(c),
 
-            "priority":
-                "Watershed-level screening",
+            "x":
+                float(px),
 
-            "reason":
-                (
-                    "A stream of order "
-                    f"{int(round(stream_order))} "
-                    "occurs within the selected watershed."
+            "y":
+                float(py),
+
+            "elevation":
+                float(
+                    elev[r, c]
                 ),
 
-            "management":
-                "Verify channel cross-section, streambed material, "
-                "foundation stability, design discharge and spillway "
-                "before construction. Inspect after major monsoon events.",
+            "slope":
+                float(
+                    slope[r, c]
+                ),
 
-        })
+            "twi":
+                float(
+                    twi[r, c]
+                ),
 
+            "drainage_density":
+                float(
+                    dd[r, c]
+                ),
 
-    # ========================================================
-    # BUILT-UP
-    # ========================================================
+            "score":
+                float(
+                    score[r, c]
+                ),
 
-    if "built" in lname:
+            "boundary_distance":
+                float(
+                    Point(
+                        px,
+                        py
+                    )
+                    .distance(
+                        field_geom.boundary
+                    )
+                ),
 
-        recommendations.append({
-
-            "structure":
-                "Rooftop Rainwater Harvesting + Recharge Pit",
-
-            "priority":
-                "High",
-
-            "reason":
-                "Built-up areas are more suitable for rooftop "
-                "collection than agricultural pond excavation.",
-
-            "management":
-                "Provide first-flush arrangement, filtration and "
-                "regular cleaning of roof, tank and recharge media.",
-
-        })
-
-
-    # ========================================================
-    # FOREST
-    # ========================================================
-
-    if "forest" in lname:
-
-        recommendations.append({
-
-            "structure":
-                "Vegetative / Low-disturbance Recharge Treatment",
-
-            "priority":
-                "Preferred",
-
-            "reason":
-                "Forest land should prioritize low-disturbance "
-                "water conservation.",
-
-            "management":
-                "Protect vegetation, minimize excavation and use "
-                "small distributed infiltration treatments.",
-
-        })
+            "stream_distance":
+                None,
+        }
 
 
-    # ========================================================
-    # SCRUB
-    # ========================================================
-
-    if "scrub" in lname:
-
-        recommendations.append({
-
-            "structure":
-                "Staggered Trench / Vegetative Rehabilitation",
-
-            "priority":
-                "Moderate",
-
-            "reason":
-                "Scrub land can benefit from distributed runoff "
-                "detention and vegetation restoration.",
-
-            "management":
-                "Combine trenches with revegetation and protect "
-                "treated areas during establishment.",
-
-        })
+    transformer = Transformer.from_crs(
+        raster_crs,
+        "EPSG:4326",
+        always_xy=True,
+    )
 
 
-    # ========================================================
-    # FALLBACK
-    # ========================================================
-
-    if not recommendations:
-
-        recommendations.append({
-
-            "structure":
-                "In-situ Rainwater Conservation",
-
-            "priority":
-                "General",
-
-            "reason":
-                "Available GIS indicators favour distributed "
-                "field-scale water conservation.",
-
-            "management":
-                "Use field bunding, vegetative barriers and "
-                "local infiltration measures.",
-
-        })
+    lon, lat = transformer.transform(
+        best[
+            "x"
+        ],
+        best[
+            "y"
+        ],
+    )
 
 
-    return recommendations
+    low_lon, low_lat = transformer.transform(
+        low_x,
+        low_y,
+    )
+
+
+    best[
+        "longitude"
+    ] = float(lon)
+
+    best[
+        "latitude"
+    ] = float(lat)
+
+
+    lowest = {
+
+        "x":
+            float(
+                low_x
+            ),
+
+        "y":
+            float(
+                low_y
+            ),
+
+        "longitude":
+            float(
+                low_lon
+            ),
+
+        "latitude":
+            float(
+                low_lat
+            ),
+
+        "elevation":
+            float(
+                elev[
+                    low_index
+                ]
+            ),
+    }
+
+
+    return {
+
+        "recommended":
+            best,
+
+        "absolute_lowest":
+            lowest,
+    }
 
 
 # ============================================================
-# RESET
+# 16. POND VOLUME EQUATIONS
 # ============================================================
 
-def clear_field():
+def pond_geometry_from_bottom_width(
+    bottom_width,
+    water_depth,
+    freeboard,
+    side_slope,
+    length_width_ratio,
+):
+
+    bottom_length = (
+        length_width_ratio
+        *
+        bottom_width
+    )
+
+
+    water_top_width = (
+        bottom_width
+        +
+        2
+        *
+        side_slope
+        *
+        water_depth
+    )
+
+
+    water_top_length = (
+        bottom_length
+        +
+        2
+        *
+        side_slope
+        *
+        water_depth
+    )
+
+
+    excavation_depth = (
+        water_depth
+        +
+        freeboard
+    )
+
+
+    excavation_top_width = (
+        bottom_width
+        +
+        2
+        *
+        side_slope
+        *
+        excavation_depth
+    )
+
+
+    excavation_top_length = (
+        bottom_length
+        +
+        2
+        *
+        side_slope
+        *
+        excavation_depth
+    )
+
+
+    bottom_area = (
+        bottom_length
+        *
+        bottom_width
+    )
+
+
+    water_top_area = (
+        water_top_length
+        *
+        water_top_width
+    )
+
+
+    volume = (
+
+        water_depth
+        / 3.0
+
+        *
+
+        (
+            bottom_area
+
+            +
+
+            water_top_area
+
+            +
+
+            math.sqrt(
+                bottom_area
+                *
+                water_top_area
+            )
+        )
+
+    )
+
+
+    excavation_footprint = (
+        excavation_top_length
+        *
+        excavation_top_width
+    )
+
+
+    # Wetted side slant length
+
+    slant = math.sqrt(
+
+        water_depth ** 2
+
+        +
+
+        (
+            side_slope
+            *
+            water_depth
+        ) ** 2
+
+    )
+
+
+    long_side_area = (
+
+        (
+            bottom_length
+            +
+            water_top_length
+        )
+        / 2.0
+
+        *
+        slant
+
+    )
+
+
+    short_side_area = (
+
+        (
+            bottom_width
+            +
+            water_top_width
+        )
+        / 2.0
+
+        *
+        slant
+
+    )
+
+
+    wetted_lining_area = (
+
+        bottom_area
+
+        +
+
+        2
+        *
+        long_side_area
+
+        +
+
+        2
+        *
+        short_side_area
+
+    )
+
+
+    return {
+
+        "bottom_width":
+            bottom_width,
+
+        "bottom_length":
+            bottom_length,
+
+        "water_top_width":
+            water_top_width,
+
+        "water_top_length":
+            water_top_length,
+
+        "water_depth":
+            water_depth,
+
+        "freeboard":
+            freeboard,
+
+        "excavation_depth":
+            excavation_depth,
+
+        "excavation_top_width":
+            excavation_top_width,
+
+        "excavation_top_length":
+            excavation_top_length,
+
+        "bottom_area":
+            bottom_area,
+
+        "volume":
+            volume,
+
+        "footprint_area":
+            excavation_footprint,
+
+        "liner_wetted_area":
+            wetted_lining_area,
+
+        "liner_procurement_area":
+            wetted_lining_area
+            *
+            1.10,
+    }
+
+
+# ============================================================
+# 17. PRELIMINARY FARM POND DESIGN
+# ============================================================
+
+def design_farm_pond(
+    available_water_m3,
+    field_area_ha_value,
+    storage_fraction,
+    maximum_field_fraction,
+    water_depth,
+    freeboard=0.5,
+    side_slope=1.5,
+    length_width_ratio=1.5,
+):
+
+    field_area_m2 = (
+        field_area_ha_value
+        *
+        10000.0
+    )
+
+
+    requested_storage = (
+
+        available_water_m3
+        *
+        storage_fraction
+    )
+
+
+    max_footprint = (
+
+        field_area_m2
+        *
+        maximum_field_fraction
+    )
+
+
+    # ----------------------------------------
+    # Maximum pond fitting footprint constraint
+    # ----------------------------------------
+
+    lo = 0.5
+    hi = 100.0
+
+
+    for _ in range(80):
+
+        mid = (
+            lo + hi
+        ) / 2.0
+
+
+        geom = (
+            pond_geometry_from_bottom_width(
+
+                mid,
+                water_depth,
+                freeboard,
+                side_slope,
+                length_width_ratio,
+
+            )
+        )
+
+
+        if (
+            geom[
+                "footprint_area"
+            ]
+            >
+            max_footprint
+        ):
+
+            hi = mid
+
+        else:
+
+            lo = mid
+
+
+    max_geom = (
+        pond_geometry_from_bottom_width(
+
+            lo,
+            water_depth,
+            freeboard,
+            side_slope,
+            length_width_ratio,
+
+        )
+    )
+
+
+    maximum_storage = (
+        max_geom[
+            "volume"
+        ]
+    )
+
+
+    target_storage = min(
+
+        requested_storage,
+
+        maximum_storage,
+
+    )
+
+
+    # ----------------------------------------
+    # Solve bottom width for target volume
+    # ----------------------------------------
+
+    low_b = 0.5
+    high_b = max(
+        lo,
+        1.0,
+    )
+
+
+    for _ in range(80):
+
+        mid_b = (
+            low_b
+            +
+            high_b
+        ) / 2.0
+
+
+        geom = (
+            pond_geometry_from_bottom_width(
+
+                mid_b,
+                water_depth,
+                freeboard,
+                side_slope,
+                length_width_ratio,
+
+            )
+        )
+
+
+        if (
+            geom[
+                "volume"
+            ]
+            >
+            target_storage
+        ):
+
+            high_b = mid_b
+
+        else:
+
+            low_b = mid_b
+
+
+    result = (
+        pond_geometry_from_bottom_width(
+
+            low_b,
+            water_depth,
+            freeboard,
+            side_slope,
+            length_width_ratio,
+
+        )
+    )
+
+
+    result[
+        "requested_storage"
+    ] = requested_storage
+
+
+    result[
+        "target_storage"
+    ] = target_storage
+
+
+    result[
+        "maximum_storage_by_land"
+    ] = maximum_storage
+
+
+    result[
+        "maximum_allowed_footprint"
+    ] = max_footprint
+
+
+    result[
+        "field_area_m2"
+    ] = field_area_m2
+
+
+    result[
+        "field_occupied_percent"
+    ] = (
+
+        result[
+            "footprint_area"
+        ]
+
+        /
+        field_area_m2
+
+        *
+        100.0
+    )
+
+
+    result[
+        "remaining_field_ha"
+    ] = (
+
+        (
+            field_area_m2
+
+            -
+
+            result[
+                "footprint_area"
+            ]
+        )
+
+        /
+        10000.0
+    )
+
+
+    return result
+
+
+# ============================================================
+# 18. RANK LOOKUPS
+# ============================================================
+
+def soil_rank_description(
+    rank
+):
+
+    if not np.isfinite(
+        rank
+    ):
+        return "Unknown"
+
+    rank = int(
+        round(rank)
+    )
+
+    mapping_dict = {
+
+        1:
+            "Clay / Clayey / Clay loam",
+
+        2:
+            "Silt clay loam / Silt loam",
+
+        3:
+            "Sandy clay loam",
+
+        4:
+            "Miscellaneous soil class",
+
+        5:
+            "Loam",
+    }
+
+    return mapping_dict.get(
+        rank,
+        "Unknown"
+    )
+
+
+def geology_rank_description(
+    rank
+):
+
+    if not np.isfinite(
+        rank
+    ):
+        return "Unknown"
+
+    rank = int(
+        round(rank)
+    )
+
+    mapping_dict = {
+
+        5:
+            "Quaternary",
+
+        3:
+            (
+                "Umsning Schist / "
+                "Assam-Meghalaya Gneissic"
+            ),
+
+        2:
+            (
+                "Shillong Group / "
+                "Kyrdem"
+            ),
+    }
+
+    return mapping_dict.get(
+        rank,
+        "Unmatched/other"
+    )
+
+
+def geomorph_rank_description(
+    rank
+):
+
+    if not np.isfinite(
+        rank
+    ):
+        return "Unknown"
+
+    rank = int(
+        round(rank)
+    )
+
+    mapping_dict = {
+
+        5:
+            "Valley",
+
+        4:
+            (
+                "Pediment-Pediplain / "
+                "River / Pond"
+            ),
+
+        3:
+            (
+                "Bench / Moderately "
+                "dissected upper plateau"
+            ),
+
+        2:
+            (
+                "Highly/moderately dissected "
+                "hills or plateau"
+            ),
+
+        1:
+            (
+                "Scarp / Ridge / "
+                "Low dissected upper plateau"
+            ),
+    }
+
+    return mapping_dict.get(
+        rank,
+        "Unknown"
+    )
+
+
+# ============================================================
+# 19. SEEPAGE SCREENING
+# ============================================================
+
+def seepage_assessment(
+    soil_rank,
+    geology_rank,
+    geomorph_rank,
+    lineament_density,
+):
+
+    score = 0
+    reasons = []
+
+
+    # ----------------------------------------
+    # Soil
+    # Groundwater ranks are reinterpreted for
+    # storage retention.
+    # ----------------------------------------
+
+    if np.isfinite(
+        soil_rank
+    ):
+
+        sr = int(
+            round(
+                soil_rank
+            )
+        )
+
+
+        if sr == 1:
+
+            reasons.append(
+                "Clayey/clay-loam soil rank suggests relatively favourable water retention."
+            )
+
+
+        elif sr == 2:
+
+            score += 1
+
+            reasons.append(
+                "Silty soil class may permit moderate seepage depending on field condition."
+            )
+
+
+        elif sr == 3:
+
+            score += 2
+
+            reasons.append(
+                "Sandy clay loam indicates increased seepage potential."
+            )
+
+
+        elif sr == 5:
+
+            score += 2
+
+            reasons.append(
+                "Loam groundwater rank indicates potentially greater permeability than clayey soil."
+            )
+
+
+        else:
+
+            score += 1
+
+            reasons.append(
+                "Soil class requires field permeability verification."
+            )
+
+
+    # ----------------------------------------
+    # Lineament density
+    # Approximate thresholds guided by observed
+    # stack distribution.
+    # ----------------------------------------
+
+    if np.isfinite(
+        lineament_density
+    ):
+
+        if lineament_density >= 0.55:
+
+            score += 2
+
+            reasons.append(
+                "High lineament density indicates elevated fracture-related seepage risk."
+            )
+
+        elif lineament_density >= 0.19:
+
+            score += 1
+
+            reasons.append(
+                "Moderate lineament density indicates some fracture-related seepage risk."
+            )
+
+        else:
+
+            reasons.append(
+                "Low local lineament density reduces fracture-related seepage concern."
+            )
+
+
+    # ----------------------------------------
+    # Geology
+    # Do not over-interpret groundwater rank.
+    # ----------------------------------------
+
+    if np.isfinite(
+        geology_rank
+    ):
+
+        gr = int(
+            round(
+                geology_rank
+            )
+        )
+
+        if gr == 5:
+
+            score += 1
+
+            reasons.append(
+                "Quaternary material can be heterogeneous; permeability must be verified in the field."
+            )
+
+        elif gr in [2, 3]:
+
+            reasons.append(
+                "Bedrock geological setting requires checking weathering and fractures at excavation depth."
+            )
+
+
+    if score >= 4:
+
+        risk = "HIGH"
+
+        lining = (
+            "Impermeable lining is strongly recommended. "
+            "Consider a properly prepared compacted subgrade "
+            "with an appropriate geomembrane/approved pond-lining "
+            "system after field permeability and geotechnical verification."
+        )
+
+
+    elif score >= 2:
+
+        risk = "MODERATE"
+
+        lining = (
+            "Lining should be considered. A compacted clay blanket "
+            "may be adequate where suitable clay is available; "
+            "use an approved geomembrane where reliable retention "
+            "is essential or field permeability is high."
+        )
+
+
+    else:
+
+        risk = "LOW"
+
+        lining = (
+            "Natural/compacted soil treatment may be adequate, "
+            "but a field permeability test is still required before "
+            "deciding that synthetic lining is unnecessary."
+        )
+
+
+    return {
+
+        "risk":
+            risk,
+
+        "score":
+            score,
+
+        "reasons":
+            reasons,
+
+        "lining_recommendation":
+            lining,
+    }
+
+
+# ============================================================
+# 20. RESET
+# ============================================================
+
+def reset_assessment():
 
     st.session_state[
         "field_geometry"
     ] = None
 
     st.session_state[
-        "watershed_geometry"
+        "current_lulc"
     ] = None
 
     st.session_state[
-        "result"
-    ] = None
-
-
-def clear_watershed():
-
-    st.session_state[
-        "watershed_geometry"
-    ] = None
-
-    st.session_state[
-        "result"
+        "assessment"
     ] = None
 
 
 # ============================================================
-# HEADER
-# ============================================================
-
-render_html(
-    "hero.html"
-)
-
-
-st.markdown(
-    """
-<div class="card card-blue">
-
-<b>📱 Farmer Mobile GIS Assessment</b><br>
-
-Draw the exact farmer field and watershed using the polygon tool.
-Only the area inside the farmer-drawn polygons is analysed.
-
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-
-# ============================================================
-# FARMER DETAILS
+# 21. FARMER INFORMATION
 # ============================================================
 
 with st.expander(
@@ -1273,23 +2654,20 @@ with st.expander(
 
 
 # ============================================================
-# STEP 1
+# 22. STEP 1 — DRAW FIELD
 # ============================================================
 
 st.header(
-    "1️⃣ Draw Farmer Field"
+    "1️⃣ Demarcate Farmer Field"
 )
 
 
 st.info(
-    "Tap polygon tool ⬠ → tap each field corner → "
-    "tap the first point again to close the polygon."
+    "Use the polygon tool ⬠ and tap the actual corners "
+    "of the farmer's land. Close the polygon by tapping "
+    "the first point again."
 )
 
-
-# ============================================================
-# FIELD MAP
-# ============================================================
 
 field_map = folium.Map(
 
@@ -1341,30 +2719,31 @@ folium.TileLayer(
 )
 
 
-# District outline only
+if boundary_wgs is not None:
 
-folium.GeoJson(
+    folium.GeoJson(
 
-    boundary_wgs.__geo_interface__,
+        boundary_wgs.__geo_interface__,
 
-    name="Ri Bhoi Boundary",
+        name="Ri Bhoi District",
 
-    style_function=lambda x: {
+        style_function=lambda x: {
 
-        "color": "#FFD600",
+            "color":
+                "#FFD600",
 
-        "weight": 2,
+            "weight":
+                2,
 
-        "fillOpacity": 0,
+            "fillOpacity":
+                0,
 
-    },
+        },
 
-).add_to(
-    field_map
-)
+    ).add_to(
+        field_map
+    )
 
-
-# Existing field
 
 if st.session_state[
     "field_geometry"
@@ -1380,67 +2759,23 @@ if st.session_state[
 
         style_function=lambda x: {
 
-            "color": "#00C853",
+            "color":
+                "#00C853",
 
-            "weight": 5,
+            "weight":
+                5,
 
-            "fillColor": "#69F0AE",
+            "fillColor":
+                "#69F0AE",
 
-            "fillOpacity": 0.25,
+            "fillOpacity":
+                0.25,
 
         },
 
     ).add_to(
         field_map
     )
-
-
-    # LULC clipped inside farm
-
-    field_lulc_layer = (
-        lulc_display_geojson(
-
-            st.session_state[
-                "field_geometry"
-            ]
-
-        )
-    )
-
-
-    if field_lulc_layer:
-
-        folium.GeoJson(
-
-            field_lulc_layer,
-
-            name="LULC inside Farm",
-
-            style_function=lambda x: {
-
-                "color": "#8A6D1D",
-
-                "weight": 1,
-
-                "fillOpacity": 0.20,
-
-            },
-
-            tooltip=folium.GeoJsonTooltip(
-
-                fields=[
-                    "LULC_2022"
-                ],
-
-                aliases=[
-                    "LULC:"
-                ],
-
-            ),
-
-        ).add_to(
-            field_map
-        )
 
 
 Draw(
@@ -1476,9 +2811,6 @@ Draw(
 
             "metric":
                 True,
-
-            "repeatMode":
-                False,
 
             "shapeOptions": {
 
@@ -1546,7 +2878,7 @@ field_output = st_folium(
 
     use_container_width=True,
 
-    key="field_map",
+    key="farmer_field_map",
 
     returned_objects=[
 
@@ -1567,15 +2899,11 @@ new_field = get_last_polygon(
 if new_field is not None:
 
     if (
-
         new_field
-
         !=
-
         st.session_state[
             "field_geometry"
         ]
-
     ):
 
         st.session_state[
@@ -1583,11 +2911,11 @@ if new_field is not None:
         ] = new_field
 
         st.session_state[
-            "watershed_geometry"
+            "assessment"
         ] = None
 
         st.session_state[
-            "result"
+            "current_lulc"
         ] = None
 
         st.rerun()
@@ -1599,87 +2927,37 @@ field = st.session_state[
 
 
 # ============================================================
-# IMMEDIATE FIELD OUTPUT
+# 23. FIELD DETAILS
 # ============================================================
 
 if field:
 
-    field_area = (
-        calculate_area_ha(
-            field
-        )
+    area_ha_value = field_area_ha(
+        field
     )
 
 
-    field_lulc = (
-        lulc_summary(
-            field
-        )
+    lulc_summary = mapped_lulc_summary(
+        field
     )
 
 
-    dominant_lulc = (
+    mapped_lulc = (
 
-        field_lulc[0][
+        lulc_summary[0][
             "name"
         ]
 
-        if field_lulc
+        if lulc_summary
 
-        else "No LULC data"
-
-    )
-
-
-    rainfall = zonal_stats(
-
-        RAINFALL_RASTER,
-
-        field,
-
-    )["mean"]
-
-
-    runoff = zonal_stats(
-
-        MEAN_RUNOFF_RASTER,
-
-        field,
-
-    )["mean"]
-
-
-    dependable = zonal_stats(
-
-        DEPENDABLE_RUNOFF_RASTER,
-
-        field,
-
-    )["mean"]
-
-
-    potential_water = (
-
-        runoff
-
-        * field_area
-
-        * 10
-
-        if np.isfinite(
-            runoff
-        )
-
-        else np.nan
+        else "Unknown"
 
     )
 
 
     st.success(
-
         f"✅ Farmer field captured: "
-        f"{field_area:.3f} ha"
-
+        f"{area_ha_value:.3f} ha"
     )
 
 
@@ -1689,166 +2967,892 @@ if field:
 
 
     c1.metric(
-
-        "Dominant LULC",
-
-        dominant_lulc,
-
-    )
-
-
-    c2.metric(
-
         "Field Area",
-
-        f"{field_area:.3f} ha",
-
-    )
-
-
-    c1, c2 = st.columns(
-        2
-    )
-
-
-    c1.metric(
-
-        "Annual Rainfall",
-
-        (
-            f"{rainfall:.0f} mm"
-
-            if np.isfinite(
-                rainfall
-            )
-
-            else "No data"
-        ),
-
+        f"{area_ha_value:.3f} ha",
     )
 
 
     c2.metric(
-
-        "Annual Runoff",
-
-        (
-            f"{runoff:.0f} mm"
-
-            if np.isfinite(
-                runoff
-            )
-
-            else "No data"
-        ),
-
+        "GIS-Mapped LULC",
+        mapped_lulc,
     )
 
 
-    c1, c2 = st.columns(
-        2
-    )
+    LAND_USE_OPTIONS = [
+
+        "Crop land",
+        "Plantation",
+        "Shifting Cultivation",
+        "Scrub land",
+        "Forest Open",
+        "Forest Moderately Dense",
+        "Forest Dense",
+        "Built up",
+        "Waterbody",
+        "River/Stream",
+    ]
 
 
-    c1.metric(
-
-        "75% Dependable Runoff",
-
-        (
-            f"{dependable:.0f} mm"
-
-            if np.isfinite(
-                dependable
-            )
-
-            else "No data"
-        ),
-
-    )
-
-
-    c2.metric(
-
-        "Potential Water",
-
-        (
-            f"{potential_water:,.0f} m³/year"
-
-            if np.isfinite(
-                potential_water
-            )
-
-            else "No data"
-        ),
-
-    )
-
-
-    with st.expander(
-        "🌾 Field LULC Composition"
+    if (
+        st.session_state[
+            "current_lulc"
+        ]
+        in LAND_USE_OPTIONS
     ):
 
-        st.dataframe(
+        default_lulc_index = (
+            LAND_USE_OPTIONS.index(
+                st.session_state[
+                    "current_lulc"
+                ]
+            )
+        )
 
-            field_lulc,
+    elif mapped_lulc in LAND_USE_OPTIONS:
 
-            use_container_width=True,
+        default_lulc_index = (
+            LAND_USE_OPTIONS.index(
+                mapped_lulc
+            )
+        )
 
-            hide_index=True,
+    else:
 
+        default_lulc_index = 0
+
+
+    st.markdown(
+        "### 🌾 Confirm Present Land Use"
+    )
+
+
+    current_lulc = st.selectbox(
+
+        "Current land use observed by farmer/field team",
+
+        LAND_USE_OPTIONS,
+
+        index=default_lulc_index,
+
+    )
+
+
+    st.session_state[
+        "current_lulc"
+    ] = current_lulc
+
+
+    if (
+        current_lulc
+        !=
+        mapped_lulc
+    ):
+
+        st.warning(
+            f"GIS layer indicates **{mapped_lulc}**, "
+            f"but present land use is confirmed as "
+            f"**{current_lulc}**. The DSS will use the "
+            "confirmed present land use for structure planning."
         )
 
 
-    if st.button(
-
-        "🗑 Redraw Farmer Field",
-
-        use_container_width=True,
-
+    with st.expander(
+        "GIS LULC composition inside farmer field"
     ):
 
-        clear_field()
-
-        st.rerun()
-
-
-else:
-
-    st.info(
-        "Draw and close the farmer field polygon."
-    )
+        st.dataframe(
+            pd.DataFrame(
+                lulc_summary
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 # ============================================================
-# STEP 2 — WATERSHED
+# 24. DESIGN SETTINGS
 # ============================================================
 
 if field:
 
     st.markdown("---")
 
+    st.header(
+        "2️⃣ Farm Pond Planning Settings"
+    )
+
+
+    with st.expander(
+        "Adjust preliminary design assumptions",
+        expanded=False,
+    ):
+
+        storage_fraction_percent = st.slider(
+
+            "One-time storage as % of 75% dependable annual runoff",
+
+            min_value=10,
+
+            max_value=60,
+
+            value=30,
+
+            step=5,
+
+        )
+
+
+        maximum_land_percent = st.slider(
+
+            "Maximum farmer land occupied by pond (%)",
+
+            min_value=5,
+
+            max_value=20,
+
+            value=10,
+
+            step=1,
+
+        )
+
+
+        water_depth = st.slider(
+
+            "Planning water depth (m)",
+
+            min_value=1.5,
+
+            max_value=3.5,
+
+            value=2.5,
+
+            step=0.25,
+
+        )
+
+
+        freeboard = st.slider(
+
+            "Freeboard (m)",
+
+            min_value=0.3,
+
+            max_value=0.75,
+
+            value=0.5,
+
+            step=0.05,
+
+        )
+
+
+        side_slope = st.slider(
+
+            "Planning side slope (H:1V)",
+
+            min_value=1.0,
+
+            max_value=2.5,
+
+            value=1.5,
+
+            step=0.25,
+
+        )
+
+
+        length_width_ratio = st.slider(
+
+            "Bottom length : breadth ratio",
+
+            min_value=1.0,
+
+            max_value=2.0,
+
+            value=1.5,
+
+            step=0.1,
+
+        )
+
+
+# ============================================================
+# 25. RUN ASSESSMENT
+# ============================================================
+
+if field:
+
+    st.markdown("---")
 
     st.header(
-        "2️⃣ Draw Watershed / Catchment"
+        "3️⃣ Automatic Pond Site & Design"
     )
 
 
-    st.info(
-        "Draw the contributing watershed as an orange polygon."
-    )
+    if st.button(
 
+        "💧 FIND FARM POND LOCATION & DESIGN",
 
-    watershed_map = folium.Map(
+        type="primary",
 
-        location=geometry_center(
+        use_container_width=True,
+
+    ):
+
+        area_ha_value = field_area_ha(
             field
-        ),
+        )
 
-        zoom_start=14,
+
+        # ------------------------------------
+        # Hydrology
+        # ------------------------------------
+
+        rainfall = safe_raster_stats(
+            RAINFALL_RASTER,
+            field,
+        )["mean"]
+
+
+        mean_runoff = safe_raster_stats(
+            MEAN_RUNOFF_RASTER,
+            field,
+        )["mean"]
+
+
+        dependable_runoff = safe_raster_stats(
+            DEPENDABLE_RUNOFF_RASTER,
+            field,
+        )["mean"]
+
+
+        runoff_coeff = safe_raster_stats(
+            RUNOFF_COEFFICIENT_RASTER,
+            field,
+        )["mean"]
+
+
+        cn = safe_raster_stats(
+            CN_RASTER,
+            field,
+        )["mean"]
+
+
+        mean_runoff_volume = (
+
+            mean_runoff
+            *
+            area_ha_value
+            *
+            10
+
+            if np.isfinite(
+                mean_runoff
+            )
+
+            else np.nan
+
+        )
+
+
+        dependable_volume = (
+
+            dependable_runoff
+            *
+            area_ha_value
+            *
+            10
+
+            if np.isfinite(
+                dependable_runoff
+            )
+
+            else np.nan
+
+        )
+
+
+        available_for_design = (
+
+            dependable_volume
+
+            if np.isfinite(
+                dependable_volume
+            )
+
+            else mean_runoff_volume
+
+        )
+
+
+        if not np.isfinite(
+            available_for_design
+        ):
+
+            st.error(
+                "Runoff data are not available for this field."
+            )
+
+            st.stop()
+
+
+        # ------------------------------------
+        # Pond design
+        # ------------------------------------
+
+        pond_design = design_farm_pond(
+
+            available_for_design,
+
+            area_ha_value,
+
+            storage_fraction=
+                (
+                    storage_fraction_percent
+                    /
+                    100.0
+                ),
+
+            maximum_field_fraction=
+                (
+                    maximum_land_percent
+                    /
+                    100.0
+                ),
+
+            water_depth=
+                water_depth,
+
+            freeboard=
+                freeboard,
+
+            side_slope=
+                side_slope,
+
+            length_width_ratio=
+                length_width_ratio,
+
+        )
+
+
+        # ------------------------------------
+        # Boundary clearance based partly
+        # on proposed footprint.
+        # ------------------------------------
+
+        half_diagonal = (
+
+            0.5
+
+            *
+
+            math.sqrt(
+
+                pond_design[
+                    "excavation_top_length"
+                ] ** 2
+
+                +
+
+                pond_design[
+                    "excavation_top_width"
+                ] ** 2
+
+            )
+
+        )
+
+
+        clearance = max(
+            10.0,
+            half_diagonal
+            +
+            2.0,
+        )
+
+
+        sites = find_pond_sites(
+
+            field,
+
+            minimum_boundary_clearance=
+                clearance,
+
+        )
+
+
+        if sites is None:
+
+            st.error(
+                "No valid DEM cells were found inside the selected field."
+            )
+
+            st.stop()
+
+
+        site = sites[
+            "recommended"
+        ]
+
+
+        lowest = sites[
+            "absolute_lowest"
+        ]
+
+
+        # ------------------------------------
+        # Site-specific thematic values
+        # ------------------------------------
+
+        geology_rank = sample_raster_at_xy(
+
+            GEOLOGY_RASTER,
+
+            site[
+                "x"
+            ],
+
+            site[
+                "y"
+            ],
+
+        )
+
+
+        geomorph_rank = sample_raster_at_xy(
+
+            GEOMORPH_RASTER,
+
+            site[
+                "x"
+            ],
+
+            site[
+                "y"
+            ],
+
+        )
+
+
+        soil_rank = sample_raster_at_xy(
+
+            SOIL_RASTER,
+
+            site[
+                "x"
+            ],
+
+            site[
+                "y"
+            ],
+
+        )
+
+
+        lineament_density = (
+            sample_raster_at_xy(
+
+                LINEAMENT_DENSITY_RASTER,
+
+                site[
+                    "x"
+                ],
+
+                site[
+                    "y"
+                ],
+
+            )
+        )
+
+
+        # ------------------------------------
+        # Seepage
+        # ------------------------------------
+
+        seepage = seepage_assessment(
+
+            soil_rank,
+
+            geology_rank,
+
+            geomorph_rank,
+
+            lineament_density,
+
+        )
+
+
+        # ------------------------------------
+        # Nearby RWH data
+        # ------------------------------------
+
+        nearest_stream = nearest_distance(
+            field,
+            streams_utm,
+        )
+
+
+        nearest_mgnrega = nearest_distance(
+            field,
+            mgnrega_utm,
+        )
+
+
+        nearest_final94 = nearest_distance(
+            field,
+            final94_utm,
+        )
+
+
+        nearest_published = nearest_distance(
+            field,
+            published_utm,
+        )
+
+
+        # ------------------------------------
+        # Store assessment
+        # ------------------------------------
+
+        st.session_state[
+            "assessment"
+        ] = {
+
+            "field_area_ha":
+                area_ha_value,
+
+            "mapped_lulc":
+                mapped_lulc,
+
+            "current_lulc":
+                current_lulc,
+
+            "rainfall":
+                rainfall,
+
+            "mean_runoff":
+                mean_runoff,
+
+            "dependable_runoff":
+                dependable_runoff,
+
+            "runoff_coefficient":
+                runoff_coeff,
+
+            "cn":
+                cn,
+
+            "mean_runoff_volume":
+                mean_runoff_volume,
+
+            "dependable_volume":
+                dependable_volume,
+
+            "pond_design":
+                pond_design,
+
+            "site":
+                site,
+
+            "lowest":
+                lowest,
+
+            "geology_rank":
+                geology_rank,
+
+            "geomorph_rank":
+                geomorph_rank,
+
+            "soil_rank":
+                soil_rank,
+
+            "lineament_density":
+                lineament_density,
+
+            "seepage":
+                seepage,
+
+            "nearest_stream":
+                nearest_stream,
+
+            "nearest_mgnrega":
+                nearest_mgnrega,
+
+            "nearest_final94":
+                nearest_final94,
+
+            "nearest_published":
+                nearest_published,
+
+        }
+
+
+        st.rerun()
+
+
+# ============================================================
+# 26. RESULTS
+# ============================================================
+
+result = st.session_state[
+    "assessment"
+]
+
+
+if result:
+
+    site = result[
+        "site"
+    ]
+
+    lowest = result[
+        "lowest"
+    ]
+
+    design = result[
+        "pond_design"
+    ]
+
+    seepage = result[
+        "seepage"
+    ]
+
+
+    st.markdown("---")
+
+    st.header(
+        "✅ Farmer RWH Planning Result"
+    )
+
+
+    # ========================================================
+    # STRUCTURE
+    # ========================================================
+
+    if (
+        "crop"
+        in result[
+            "current_lulc"
+        ].lower()
+
+        or
+
+        "plantation"
+        in result[
+            "current_lulc"
+        ].lower()
+    ):
+
+        st.success(
+            """
+### 🏗️ Primary Structure
+**Farm Pond**
+
+The structure is proposed within the farmer's field at the
+lowest practical runoff-convergence zone identified from
+elevation, slope, TWI, drainage context and flow accumulation.
+"""
+        )
+
+    else:
+
+        st.warning(
+            """
+The selected land use is not clearly agricultural.
+The farm-pond design below should therefore be treated as
+a screening result and verified before implementation.
+"""
+        )
+
+
+    # ========================================================
+    # FIELD WATER
+    # ========================================================
+
+    st.subheader(
+        "🌧️ Water Availability"
+    )
+
+
+    c1, c2 = st.columns(
+        2
+    )
+
+
+    c1.metric(
+        "Field Area",
+        f"{result['field_area_ha']:.3f} ha",
+    )
+
+
+    c2.metric(
+        "Spatial Annual Rainfall",
+        (
+            f"{result['rainfall']:.0f} mm/year"
+            if np.isfinite(
+                result[
+                    "rainfall"
+                ]
+            )
+            else "No data"
+        ),
+    )
+
+
+    c1, c2 = st.columns(
+        2
+    )
+
+
+    c1.metric(
+        "Mean Annual Runoff",
+        (
+            f"{result['mean_runoff']:.0f} mm"
+            if np.isfinite(
+                result[
+                    "mean_runoff"
+                ]
+            )
+            else "No data"
+        ),
+    )
+
+
+    c2.metric(
+        "75% Dependable Runoff",
+        (
+            f"{result['dependable_runoff']:.0f} mm"
+            if np.isfinite(
+                result[
+                    "dependable_runoff"
+                ]
+            )
+            else "No data"
+        ),
+    )
+
+
+    c1, c2 = st.columns(
+        2
+    )
+
+
+    c1.metric(
+        "Annual Runoff Volume",
+        (
+            f"{result['mean_runoff_volume']:,.0f} m³/year"
+            if np.isfinite(
+                result[
+                    "mean_runoff_volume"
+                ]
+            )
+            else "No data"
+        ),
+    )
+
+
+    c2.metric(
+        "75% Dependable Volume",
+        (
+            f"{result['dependable_volume']:,.0f} m³/year"
+            if np.isfinite(
+                result[
+                    "dependable_volume"
+                ]
+            )
+            else "No data"
+        ),
+    )
+
+
+    # ========================================================
+    # SITE LOCATION
+    # ========================================================
+
+    st.subheader(
+        "📍 Recommended Farm Pond Location"
+    )
+
+
+    c1, c2 = st.columns(
+        2
+    )
+
+
+    c1.metric(
+        "Latitude",
+        f"{site['latitude']:.6f}",
+    )
+
+
+    c2.metric(
+        "Longitude",
+        f"{site['longitude']:.6f}",
+    )
+
+
+    c1, c2 = st.columns(
+        2
+    )
+
+
+    c1.metric(
+        "Elevation",
+        f"{site['elevation']:.1f} m",
+    )
+
+
+    c2.metric(
+        "Local Slope",
+        f"{site['slope']:.2f}°",
+    )
+
+
+    c1, c2 = st.columns(
+        2
+    )
+
+
+    c1.metric(
+        "TWI",
+        f"{site['twi']:.2f}",
+    )
+
+
+    c2.metric(
+        "Boundary Clearance",
+        f"{site['boundary_distance']:.1f} m",
+    )
+
+
+    st.caption(
+        "The red point is the recommended practical pond centre. "
+        "The yellow point is the absolute lowest DEM pixel. "
+        "They may differ if the absolute lowest location is too close "
+        "to the farm boundary, stream, or has less favourable terrain."
+    )
+
+
+    # ========================================================
+    # RESULT MAP
+    # ========================================================
+
+    result_map = folium.Map(
+
+        location=[
+            site[
+                "latitude"
+            ],
+            site[
+                "longitude"
+            ],
+        ],
+
+        zoom_start=17,
 
         tiles=None,
-
-        prefer_canvas=True,
 
         control_scale=True,
 
@@ -1873,11 +3877,22 @@ if field:
         show=True,
 
     ).add_to(
-        watershed_map
+        result_map
     )
 
 
-    # Farmer field
+    folium.TileLayer(
+
+        "OpenStreetMap",
+
+        name="Street Map",
+
+        show=False,
+
+    ).add_to(
+        result_map
+    )
+
 
     folium.GeoJson(
 
@@ -1891,7 +3906,7 @@ if field:
                 "#00C853",
 
             "weight":
-                4,
+                5,
 
             "fillColor":
                 "#69F0AE",
@@ -1902,903 +3917,252 @@ if field:
         },
 
     ).add_to(
-        watershed_map
+        result_map
     )
 
 
-    # Nearby streams
+    folium.Marker(
 
-    reference_geometry = (
+        location=[
 
-        st.session_state[
-            "watershed_geometry"
-        ]
-
-        if st.session_state[
-            "watershed_geometry"
-        ]
-
-        else field
-
-    )
-
-
-    stream_layer = local_streams(
-        reference_geometry
-    )
-
-
-    if stream_layer:
-
-        folium.GeoJson(
-
-            stream_layer,
-
-            name="Nearby Streams",
-
-            style_function=lambda x: {
-
-                "color":
-                    "#1565C0",
-
-                "weight":
-                    2.5,
-
-            },
-
-        ).add_to(
-            watershed_map
-        )
-
-
-    # Existing watershed
-
-    if st.session_state[
-        "watershed_geometry"
-    ]:
-
-        folium.GeoJson(
-
-            st.session_state[
-                "watershed_geometry"
+            site[
+                "latitude"
             ],
 
-            name="Watershed",
+            site[
+                "longitude"
+            ],
 
-            style_function=lambda x: {
+        ],
 
-                "color":
-                    "#FF6D00",
+        tooltip="Recommended Farm Pond Site",
 
-                "weight":
-                    5,
+        popup=(
 
-                "fillColor":
-                    "#FFB74D",
+            f"<b>Recommended Farm Pond</b><br>"
+            f"Elevation: {site['elevation']:.1f} m<br>"
+            f"Slope: {site['slope']:.2f}°<br>"
+            f"TWI: {site['twi']:.2f}"
 
-                "fillOpacity":
-                    0.18,
+        ),
 
-            },
-
-        ).add_to(
-            watershed_map
-        )
-
-
-        watershed_lulc_layer = (
-            lulc_display_geojson(
-
-                st.session_state[
-                    "watershed_geometry"
-                ]
-
-            )
-        )
-
-
-        if watershed_lulc_layer:
-
-            folium.GeoJson(
-
-                watershed_lulc_layer,
-
-                name="Watershed LULC",
-
-                style_function=lambda x: {
-
-                    "color":
-                        "#795548",
-
-                    "weight":
-                        1,
-
-                    "fillOpacity":
-                        0.10,
-
-                },
-
-                tooltip=folium.GeoJsonTooltip(
-
-                    fields=[
-                        "LULC_2022"
-                    ],
-
-                    aliases=[
-                        "LULC:"
-                    ],
-
-                ),
-
-            ).add_to(
-                watershed_map
-            )
-
-
-    Draw(
-
-        export=False,
-
-        position="topleft",
-
-        draw_options={
-
-            "polyline":
-                False,
-
-            "rectangle":
-                False,
-
-            "circle":
-                False,
-
-            "circlemarker":
-                False,
-
-            "marker":
-                False,
-
-            "polygon": {
-
-                "allowIntersection":
-                    False,
-
-                "showArea":
-                    True,
-
-                "metric":
-                    True,
-
-                "shapeOptions": {
-
-                    "color":
-                        "#FF6D00",
-
-                    "weight":
-                        5,
-
-                    "fillColor":
-                        "#FFB74D",
-
-                    "fillOpacity":
-                        0.20,
-
-                },
-
-            },
-
-        },
-
-        edit_options={
-
-            "edit":
-                True,
-
-            "remove":
-                True,
-
-        },
+        icon=folium.Icon(
+            color="red",
+            icon="tint",
+        ),
 
     ).add_to(
-        watershed_map
+        result_map
+    )
+
+
+    folium.Marker(
+
+        location=[
+
+            lowest[
+                "latitude"
+            ],
+
+            lowest[
+                "longitude"
+            ],
+
+        ],
+
+        tooltip="Absolute Lowest DEM Point",
+
+        popup=(
+
+            "<b>Absolute Lowest Point</b><br>"
+            f"Elevation: {lowest['elevation']:.1f} m"
+
+        ),
+
+        icon=folium.Icon(
+            color="orange",
+            icon="arrow-down",
+        ),
+
+    ).add_to(
+        result_map
     )
 
 
     Fullscreen().add_to(
-        watershed_map
-    )
-
-
-    MeasureControl(
-
-        primary_length_unit="meters",
-
-        primary_area_unit="hectares",
-
-    ).add_to(
-        watershed_map
+        result_map
     )
 
 
     folium.LayerControl(
         collapsed=True
     ).add_to(
-        watershed_map
+        result_map
     )
 
 
-    watershed_output = st_folium(
+    st_folium(
 
-        watershed_map,
+        result_map,
 
         height=520,
 
         use_container_width=True,
 
-        key="watershed_map",
-
-        returned_objects=[
-
-            "all_drawings",
-
-            "last_active_drawing",
-
-        ],
+        key="result_site_map",
 
     )
 
 
-    new_watershed = (
-        get_last_polygon(
-            watershed_output
-        )
+    # ========================================================
+    # POND DESIGN
+    # ========================================================
+
+    st.subheader(
+        "📐 Preliminary Farm Pond Design"
     )
 
 
-    if new_watershed is not None:
-
-        if (
-
-            new_watershed
-
-            !=
-
-            st.session_state[
-                "watershed_geometry"
-            ]
-
-        ):
-
-            st.session_state[
-                "watershed_geometry"
-            ] = new_watershed
-
-            st.session_state[
-                "result"
-            ] = None
-
-            st.rerun()
-
-
-watershed = st.session_state[
-    "watershed_geometry"
-]
-
-
-if field and watershed:
-
-    st.success(
-
-        "✅ Watershed captured: "
-        f"{calculate_area_ha(watershed):.2f} ha"
-
+    c1, c2 = st.columns(
+        2
     )
 
 
-    with st.expander(
-        "🌿 Watershed LULC"
+    c1.metric(
+        "Proposed Storage",
+        f"{design['target_storage']:,.0f} m³",
+    )
+
+
+    c2.metric(
+        "Water Depth",
+        f"{design['water_depth']:.2f} m",
+    )
+
+
+    c1, c2 = st.columns(
+        2
+    )
+
+
+    c1.metric(
+        "Bottom Length",
+        f"{design['bottom_length']:.1f} m",
+    )
+
+
+    c2.metric(
+        "Bottom Breadth",
+        f"{design['bottom_width']:.1f} m",
+    )
+
+
+    c1, c2 = st.columns(
+        2
+    )
+
+
+    c1.metric(
+        "Top Length",
+        f"{design['excavation_top_length']:.1f} m",
+    )
+
+
+    c2.metric(
+        "Top Breadth",
+        f"{design['excavation_top_width']:.1f} m",
+    )
+
+
+    c1, c2 = st.columns(
+        2
+    )
+
+
+    c1.metric(
+        "Excavation Depth",
+        f"{design['excavation_depth']:.2f} m",
+    )
+
+
+    c2.metric(
+        "Freeboard",
+        f"{design['freeboard']:.2f} m",
+    )
+
+
+    c1, c2 = st.columns(
+        2
+    )
+
+
+    c1.metric(
+        "Pond Footprint",
+        f"{design['footprint_area']:,.0f} m²",
+    )
+
+
+    c2.metric(
+        "Farm Area Occupied",
+        f"{design['field_occupied_percent']:.1f}%",
+    )
+
+
+    st.metric(
+        "Remaining Farmer Land",
+        f"{design['remaining_field_ha']:.3f} ha",
+    )
+
+
+    if (
+        design[
+            "requested_storage"
+        ]
+        >
+        design[
+            "target_storage"
+        ]
     ):
 
-        st.dataframe(
-
-            lulc_summary(
-                watershed
-            ),
-
-            use_container_width=True,
-
-            hide_index=True,
-
+        st.warning(
+            "The desired storage volume would occupy more than "
+            "the permitted percentage of the farmer's land. "
+            "The DSS therefore reduced the pond capacity to a "
+            "preliminary size that fits the selected land-use limit."
         )
 
 
-    if st.button(
+    # ========================================================
+    # SEEPAGE
+    # ========================================================
 
-        "🗑 Redraw Watershed",
-
-        use_container_width=True,
-
-    ):
-
-        clear_watershed()
-
-        st.rerun()
-
-
-# ============================================================
-# STEP 3 — ANALYSIS
-# ============================================================
-
-if field and watershed:
-
-    st.markdown("---")
-
-
-    st.header(
-        "3️⃣ Complete RWH Assessment"
+    st.subheader(
+        "🪨 Seepage & Pond Lining Assessment"
     )
 
 
-    if st.button(
-
-        "💧 RUN COMPLETE RWH ASSESSMENT",
-
-        type="primary",
-
-        use_container_width=True,
-
-    ):
-
-        field_area = (
-            calculate_area_ha(
-                field
-            )
-        )
-
-
-        watershed_area = (
-            calculate_area_ha(
-                watershed
-            )
-        )
-
-
-        # ====================================================
-        # LULC
-        # ====================================================
-
-        field_lulc = (
-            lulc_summary(
-                field
-            )
-        )
-
-
-        watershed_lulc = (
-            lulc_summary(
-                watershed
-            )
-        )
-
-
-        dominant_lulc = (
-
-            field_lulc[0][
-                "name"
-            ]
-
-            if field_lulc
-
-            else None
-
-        )
-
-
-        # ====================================================
-        # FIELD RAINFALL
-        # ====================================================
-
-        field_rainfall = zonal_stats(
-
-            RAINFALL_RASTER,
-
-            field,
-
-        )["mean"]
-
-
-        # ====================================================
-        # FIELD RUNOFF
-        # ====================================================
-
-        field_runoff = zonal_stats(
-
-            MEAN_RUNOFF_RASTER,
-
-            field,
-
-        )["mean"]
-
-
-        field_dependable = zonal_stats(
-
-            DEPENDABLE_RUNOFF_RASTER,
-
-            field,
-
-        )["mean"]
-
-
-        field_coefficient = zonal_stats(
-
-            RUNOFF_COEFF_RASTER,
-
-            field,
-
-        )["mean"]
-
-
-        field_cn = zonal_stats(
-
-            CN_RASTER,
-
-            field,
-
-        )["mean"]
-
-
-        # ====================================================
-        # WATERSHED RAINFALL + RUNOFF
-        # ====================================================
-
-        watershed_rainfall = zonal_stats(
-
-            RAINFALL_RASTER,
-
-            watershed,
-
-        )["mean"]
-
-
-        watershed_runoff = zonal_stats(
-
-            MEAN_RUNOFF_RASTER,
-
-            watershed,
-
-        )["mean"]
-
-
-        watershed_dependable = zonal_stats(
-
-            DEPENDABLE_RUNOFF_RASTER,
-
-            watershed,
-
-        )["mean"]
-
-
-        # ====================================================
-        # STREAM ORDER
-        # ====================================================
-
-        stream_order_data = zonal_stats(
-
-            STREAM_ORDER_RASTER,
-
-            watershed,
-
-        )
-
-
-        stream_order = (
-            stream_order_data[
-                "max"
-            ]
-        )
-
-
-        # ====================================================
-        # SLOPE
-        # ====================================================
-
-        field_slope = np.nan
-
-
-        slope_band = (
-            band_index_by_name(
-
-                CORE_STACK,
-
-                "slope",
-
-            )
-        )
-
-
-        if slope_band:
-
-            field_slope = zonal_stats(
-
-                CORE_STACK,
-
-                field,
-
-                slope_band,
-
-            )["mean"]
-
-
-        # ====================================================
-        # WATER VOLUMES
-        # ====================================================
-
-        field_water = (
-
-            field_runoff
-
-            * field_area
-
-            * 10
-
-            if np.isfinite(
-                field_runoff
-            )
-
-            else np.nan
-
-        )
-
-
-        field_dependable_water = (
-
-            field_dependable
-
-            * field_area
-
-            * 10
-
-            if np.isfinite(
-                field_dependable
-            )
-
-            else np.nan
-
-        )
-
-
-        watershed_water = (
-
-            watershed_runoff
-
-            * watershed_area
-
-            * 10
-
-            if np.isfinite(
-                watershed_runoff
-            )
-
-            else np.nan
-
-        )
-
-
-        watershed_dependable_water = (
-
-            watershed_dependable
-
-            * watershed_area
-
-            * 10
-
-            if np.isfinite(
-                watershed_dependable
-            )
-
-            else np.nan
-
-        )
-
-
-        # ====================================================
-        # STREAM
-        # ====================================================
-
-        stream_distance = (
-            nearest_stream_distance(
-                field
-            )
-        )
-
-
-        # ====================================================
-        # STRUCTURES
-        # ====================================================
-
-        nearest_mgnrega = (
-
-            nearest_feature(
-
-                field,
-
-                mgnrega_utm,
-
-            )
-
-            if mgnrega_utm is not None
-
-            else None
-
-        )
-
-
-        nearest_final = (
-
-            nearest_feature(
-
-                field,
-
-                final94_utm,
-
-            )
-
-            if final94_utm is not None
-
-            else None
-
-        )
-
-
-        nearest_published = (
-
-            nearest_feature(
-
-                field,
-
-                published_utm,
-
-            )
-
-            if published_utm is not None
-
-            else None
-
-        )
-
-
-        # ====================================================
-        # RECOMMENDATION
-        # ====================================================
-
-        recommendations = (
-            recommend_structures(
-
-                dominant_lulc,
-
-                field_area,
-
-                field_slope,
-
-                field_cn,
-
-                field_runoff,
-
-                field_dependable,
-
-                stream_distance,
-
-                stream_order,
-
-            )
-        )
-
-
-        result = {
-
-            "field_boundary_source":
-                "Farmer drawn polygon",
-
-            "field_area_ha":
-                field_area,
-
-            "watershed_area_ha":
-                watershed_area,
-
-            "dominant_lulc_name":
-                dominant_lulc,
-
-            "field_lulc_composition":
-                field_lulc,
-
-            "watershed_lulc_composition":
-                watershed_lulc,
-
-            "field_rainfall_mm":
-                field_rainfall,
-
-            "watershed_rainfall_mm":
-                watershed_rainfall,
-
-            "field_cn":
-                field_cn,
-
-            "field_slope":
-                field_slope,
-
-            "field_runoff_mm":
-                field_runoff,
-
-            "field_dependable_mm":
-                field_dependable,
-
-            "field_runoff_coeff":
-                field_coefficient,
-
-            "field_runoff_m3":
-                field_water,
-
-            "field_dependable_m3":
-                field_dependable_water,
-
-            "watershed_runoff_mm":
-                watershed_runoff,
-
-            "watershed_dependable_mm":
-                watershed_dependable,
-
-            "watershed_runoff_m3":
-                watershed_water,
-
-            "watershed_dependable_m3":
-                watershed_dependable_water,
-
-            "stream_order":
-                stream_order,
-
-            "field_stream_distance_m":
-                stream_distance,
-
-            "nearest_mgnrega":
-                nearest_mgnrega,
-
-            "nearest_final_site":
-                nearest_final,
-
-            "nearest_published":
-                nearest_published,
-
-            "farmer_recommendations":
-                recommendations,
-
-            "watershed_recommendations":
-                [],
-        }
-
-
-        st.session_state[
-            "result"
-        ] = result
-
-
-        # Database compatibility
-
-        if farmer_name or village:
-
-            try:
-
-                db_result = (
-                    result.copy()
-                )
-
-
-                db_result[
-                    "farmer_recommendations"
-                ] = [
-
-                    (
-                        item[
-                            "structure"
-                        ],
-
-                        item[
-                            "reason"
-                        ]
-                    )
-
-                    for item
-                    in recommendations
-
-                ]
-
-
-                save_assessment(
-
-                    farmer_name,
-
-                    village,
-
-                    db_result,
-
-                )
-
-
-            except Exception:
-
-                pass
-
-
-        st.rerun()
-
-
-# ============================================================
-# RESULTS
-# ============================================================
-
-if st.session_state[
-    "result"
-]:
-
-    r = st.session_state[
-        "result"
+    risk = seepage[
+        "risk"
     ]
 
 
-    recommendations = (
-        r[
-            "farmer_recommendations"
-        ]
-    )
+    if risk == "HIGH":
 
-
-    st.markdown("---")
-
-
-    st.header(
-        "✅ RWH Assessment Result"
-    )
-
-
-    # ========================================================
-    # MAIN RECOMMENDATION
-    # ========================================================
-
-    if recommendations:
-
-        primary = (
-            recommendations[0]
+        st.error(
+            f"Seepage Risk: {risk}"
         )
 
+    elif risk == "MODERATE":
+
+        st.warning(
+            f"Seepage Risk: {risk}"
+        )
+
+    else:
 
         st.success(
-            f"""
-### 🏗️ Recommended Structure
-
-**{primary['structure']}**
-
-Priority: **{primary['priority']}**
-
-{primary['reason']}
-"""
+            f"Seepage Risk: {risk}"
         )
-
-
-        st.info(
-            f"""
-### 🌱 Management Recommendation
-
-{primary['management']}
-"""
-        )
-
-
-    # ========================================================
-    # FIELD
-    # ========================================================
-
-    st.subheader(
-        "🌾 Farmer Field"
-    )
 
 
     c1, c2 = st.columns(
@@ -2807,33 +4171,73 @@ Priority: **{primary['priority']}**
 
 
     c1.metric(
-
-        "Field Area",
-
-        f"{r['field_area_ha']:.3f} ha",
-
+        "Soil Context",
+        soil_rank_description(
+            result[
+                "soil_rank"
+            ]
+        ),
     )
 
 
     c2.metric(
+        "Geology Context",
+        geology_rank_description(
+            result[
+                "geology_rank"
+            ]
+        ),
+    )
 
-        "Dominant LULC",
 
-        r[
-            "dominant_lulc_name"
+    st.write(
+        "**Geomorphology:**",
+        geomorph_rank_description(
+            result[
+                "geomorph_rank"
+            ]
+        ),
+    )
+
+
+    st.write(
+        "**Lineament density at proposed pond:**",
+        (
+            f"{result['lineament_density']:.3f}"
+            if np.isfinite(
+                result[
+                    "lineament_density"
+                ]
+            )
+            else "No data"
+        ),
+    )
+
+
+    st.markdown(
+        "#### Why this seepage class?"
+    )
+
+
+    for reason in seepage[
+        "reasons"
+    ]:
+
+        st.write(
+            "•",
+            reason
+        )
+
+
+    st.markdown(
+        "#### Lining Recommendation"
+    )
+
+
+    st.info(
+        seepage[
+            "lining_recommendation"
         ]
-
-        or "No data",
-
-    )
-
-
-    # ========================================================
-    # FIELD WATER
-    # ========================================================
-
-    st.subheader(
-        "🌧️ Field Rainfall & Runoff"
     )
 
 
@@ -2843,543 +4247,190 @@ Priority: **{primary['priority']}**
 
 
     c1.metric(
-
-        "Annual Rainfall",
-
-        (
-            f"{r['field_rainfall_mm']:.0f} mm"
-
-            if np.isfinite(
-                r[
-                    "field_rainfall_mm"
-                ]
-            )
-
-            else "No data"
-        ),
-
+        "Estimated Wetted Lining Area",
+        f"{design['liner_wetted_area']:,.0f} m²",
     )
 
 
     c2.metric(
-
-        "Annual Runoff",
-
-        (
-            f"{r['field_runoff_mm']:.0f} mm"
-
-            if np.isfinite(
-                r[
-                    "field_runoff_mm"
-                ]
-            )
-
-            else "No data"
-        ),
-
-    )
-
-
-    c1, c2 = st.columns(
-        2
-    )
-
-
-    c1.metric(
-
-        "Annual Runoff Volume",
-
-        (
-            f"{r['field_runoff_m3']:,.0f} m³"
-
-            if np.isfinite(
-                r[
-                    "field_runoff_m3"
-                ]
-            )
-
-            else "No data"
-        ),
-
-    )
-
-
-    c2.metric(
-
-        "75% Dependable Water",
-
-        (
-            f"{r['field_dependable_m3']:,.0f} m³"
-
-            if np.isfinite(
-                r[
-                    "field_dependable_m3"
-                ]
-            )
-
-            else "No data"
-        ),
-
+        "Liner Procurement Area (+10%)",
+        f"{design['liner_procurement_area']:,.0f} m²",
     )
 
 
     # ========================================================
-    # WATERSHED
-    # ========================================================
-
-    st.subheader(
-        "🌊 Watershed Hydrology"
-    )
-
-
-    c1, c2 = st.columns(
-        2
-    )
-
-
-    c1.metric(
-
-        "Watershed Area",
-
-        f"{r['watershed_area_ha']:.2f} ha",
-
-    )
-
-
-    c2.metric(
-
-        "Highest Stream Order",
-
-        (
-            str(
-                int(
-                    round(
-                        r[
-                            "stream_order"
-                        ]
-                    )
-                )
-            )
-
-            if np.isfinite(
-                r[
-                    "stream_order"
-                ]
-            )
-
-            else "No stream"
-        ),
-
-    )
-
-
-    c1, c2 = st.columns(
-        2
-    )
-
-
-    c1.metric(
-
-        "Watershed Rainfall",
-
-        (
-            f"{r['watershed_rainfall_mm']:.0f} mm"
-
-            if np.isfinite(
-                r[
-                    "watershed_rainfall_mm"
-                ]
-            )
-
-            else "No data"
-        ),
-
-    )
-
-
-    c2.metric(
-
-        "Watershed Runoff",
-
-        (
-            f"{r['watershed_runoff_mm']:.0f} mm"
-
-            if np.isfinite(
-                r[
-                    "watershed_runoff_mm"
-                ]
-            )
-
-            else "No data"
-        ),
-
-    )
-
-
-    c1, c2 = st.columns(
-        2
-    )
-
-
-    c1.metric(
-
-        "Watershed Runoff Volume",
-
-        (
-            f"{r['watershed_runoff_m3']:,.0f} m³/year"
-
-            if np.isfinite(
-                r[
-                    "watershed_runoff_m3"
-                ]
-            )
-
-            else "No data"
-        ),
-
-    )
-
-
-    c2.metric(
-
-        "Dependable Watershed Water",
-
-        (
-            f"{r['watershed_dependable_m3']:,.0f} m³"
-
-            if np.isfinite(
-                r[
-                    "watershed_dependable_m3"
-                ]
-            )
-
-            else "No data"
-        ),
-
-    )
-
-
-    # ========================================================
-    # TECHNICAL DETAILS
+    # TECHNICAL CONTEXT
     # ========================================================
 
     with st.expander(
-        "📊 Technical Site Details"
+        "🔬 Technical Site Information"
     ):
 
-        c1, c2 = st.columns(
-            2
+        st.write(
+            "Current land use:",
+            result[
+                "current_lulc"
+            ],
         )
 
+        st.write(
+            "GIS-mapped LULC:",
+            result[
+                "mapped_lulc"
+            ],
+        )
 
-        c1.metric(
-
-            "CN-II",
-
+        st.write(
+            "CN-II:",
             (
-                f"{r['field_cn']:.1f}"
+                round(
+                    result[
+                        "cn"
+                    ],
+                    1,
+                )
 
                 if np.isfinite(
-                    r[
-                        "field_cn"
+                    result[
+                        "cn"
                     ]
                 )
 
                 else "No data"
             ),
-
         )
 
-
-        c2.metric(
-
-            "Mean Slope",
-
+        st.write(
+            "Runoff coefficient:",
             (
-                f"{r['field_slope']:.2f}%"
+                round(
+                    result[
+                        "runoff_coefficient"
+                    ],
+                    3,
+                )
 
                 if np.isfinite(
-                    r[
-                        "field_slope"
+                    result[
+                        "runoff_coefficient"
                     ]
                 )
 
                 else "No data"
             ),
-
         )
 
-
-        c1, c2 = st.columns(
-            2
-        )
-
-
-        c1.metric(
-
-            "Runoff Coefficient",
-
-            (
-                f"{r['field_runoff_coeff']:.3f}"
-
-                if np.isfinite(
-                    r[
-                        "field_runoff_coeff"
-                    ]
-                )
-
-                else "No data"
+        st.write(
+            "Drainage density:",
+            round(
+                site[
+                    "drainage_density"
+                ],
+                3,
             ),
-
         )
 
+        if (
+            "flow_accumulation"
+            in site
+        ):
 
-        c2.metric(
+            st.write(
+                "Flow accumulation:",
+                round(
+                    site[
+                        "flow_accumulation"
+                    ],
+                    2,
+                ),
+            )
 
-            "Distance to Stream",
-
+        st.write(
+            "Distance from farmer field to mapped stream:",
             (
-                f"{r['field_stream_distance_m']:.0f} m"
+                f"{result['nearest_stream']:.0f} m"
 
-                if r[
-                    "field_stream_distance_m"
+                if result[
+                    "nearest_stream"
                 ]
                 is not None
 
                 else "No data"
             ),
+        )
 
+        st.write(
+            "Nearest MGNREGA RWH structure:",
+            (
+                f"{result['nearest_mgnrega']:.0f} m"
+
+                if result[
+                    "nearest_mgnrega"
+                ]
+                is not None
+
+                else "Layer unavailable"
+            ),
+        )
+
+        st.write(
+            "Nearest Final-94 candidate:",
+            (
+                f"{result['nearest_final94']:.0f} m"
+
+                if result[
+                    "nearest_final94"
+                ]
+                is not None
+
+                else "Layer unavailable"
+            ),
+        )
+
+        st.write(
+            "Nearest published RWH site:",
+            (
+                f"{result['nearest_published']:.0f} m"
+
+                if result[
+                    "nearest_published"
+                ]
+                is not None
+
+                else "Layer unavailable"
+            ),
         )
 
 
     # ========================================================
-    # EXISTING / PROPOSED RWH STRUCTURES
+    # MANAGEMENT
     # ========================================================
 
     st.subheader(
-        "📍 Nearby Existing / Proposed RWH Structures"
+        "🌱 Construction & Management Guidance"
     )
 
 
-    c1, c2, c3 = st.columns(
-        3
-    )
+    st.markdown(
+        """
+<div class="card green-card">
 
+<b>Farm Pond Management</b><br><br>
 
-    c1.metric(
-
-        "MGNREGA",
-
-        (
-            f"{r['nearest_mgnrega']['distance_m']:.0f} m"
-
-            if r[
-                "nearest_mgnrega"
-            ]
-
-            else "None"
-        ),
-
-    )
-
-
-    c2.metric(
-
-        "Final-94 Site",
-
-        (
-            f"{r['nearest_final_site']['distance_m']:.0f} m"
-
-            if r[
-                "nearest_final_site"
-            ]
-
-            else "None"
-        ),
-
-    )
-
-
-    c3.metric(
-
-        "Published Site",
-
-        (
-            f"{r['nearest_published']['distance_m']:.0f} m"
-
-            if r[
-                "nearest_published"
-            ]
-
-            else "None"
-        ),
-
-    )
-
-
-    # ========================================================
-    # LULC DETAILS
-    # ========================================================
-
-    with st.expander(
-        "🌿 Field & Watershed LULC"
-    ):
-
-        st.markdown(
-            "#### Farmer Field"
-        )
-
-
-        st.dataframe(
-
-            r[
-                "field_lulc_composition"
-            ],
-
-            use_container_width=True,
-
-            hide_index=True,
-
-        )
-
-
-        st.markdown(
-            "#### Watershed"
-        )
-
-
-        st.dataframe(
-
-            r[
-                "watershed_lulc_composition"
-            ],
-
-            use_container_width=True,
-
-            hide_index=True,
-
-        )
-
-
-    # ========================================================
-    # ALTERNATIVE OPTIONS
-    # ========================================================
-
-    if len(
-        recommendations
-    ) > 1:
-
-        st.subheader(
-            "🏗️ Alternative RWH & Management Options"
-        )
-
-
-        for item in recommendations[1:]:
-
-            st.markdown(
-                f"""
-<div class="card card-blue">
-
-<b>{item['structure']}</b><br>
-
-Priority:
-{item['priority']}
-
-<br><br>
-
-<b>Why:</b><br>
-{item['reason']}
-
-<br><br>
-
-<b>Management:</b><br>
-{item['management']}
+• Confirm the proposed point by field survey before excavation.<br>
+• Provide a sediment/silt trap at the runoff inlet.<br>
+• Do not block a natural stream for an off-stream farm pond.<br>
+• Provide a safe overflow/spill arrangement for excess monsoon water.<br>
+• Stabilize exposed pond bunds with suitable vegetation.<br>
+• Desilt the inlet and pond periodically.<br>
+• Protect any geomembrane from puncture during installation and operation.<br>
+• Use stored water primarily for protective/supplemental irrigation where appropriate.<br>
+• Verify soil permeability and foundation conditions before finalizing lining.<br>
 
 </div>
 """,
-                unsafe_allow_html=True,
-            )
-
-
-    # ========================================================
-    # PDF
-    # ========================================================
-
-    try:
-
-        pdf_result = (
-            r.copy()
-        )
-
-
-        pdf_result[
-            "farmer_recommendations"
-        ] = [
-
-            (
-                item[
-                    "structure"
-                ],
-
-                (
-                    item[
-                        "reason"
-                    ]
-
-                    +
-
-                    " Management: "
-
-                    +
-
-                    item[
-                        "management"
-                    ]
-                )
-
-            )
-
-            for item
-            in recommendations
-
-        ]
-
-
-        pdf = make_pdf(
-
-            farmer_name,
-
-            village,
-
-            pdf_result,
-
-        )
-
-
-        st.download_button(
-
-            "📄 Download Complete RWH Report",
-
-            data=pdf,
-
-            file_name=(
-                "RiBhoi_RWH_Assessment.pdf"
-            ),
-
-            mime="application/pdf",
-
-            use_container_width=True,
-
-        )
-
-
-    except Exception as error:
-
-        st.warning(
-
-            f"PDF report error: {error}"
-
-        )
+        unsafe_allow_html=True,
+    )
 
 
     # ========================================================
@@ -3388,40 +4439,37 @@ Priority:
 
     st.warning(
         """
-The DSS provides GIS-based planning and screening recommendations.
+This DSS provides preliminary GIS-based planning and screening.
 
-The farmer field and watershed boundaries used in the calculations
-are the polygons manually drawn by the user.
+The proposed coordinates identify a 30-m GIS candidate zone rather
+than a surveyed construction peg. Final pond location must be checked
+on the ground for micro-topography, ownership boundary, access,
+foundation conditions, natural drainage, utilities and environmental
+constraints.
 
-LULC is clipped strictly inside the selected polygons and does not
-determine the farmer boundary.
+The calculated pond dimensions are preliminary planning dimensions.
+Final embankment, inlet, outlet, spillway, excavation, lining,
+freeboard and structural dimensions require engineering design and
+field verification.
 
-CHIRPS rainfall is a coarse-resolution rainfall product; alignment
-with the GIS analysis grid does not create true 30-m rainfall
-observations.
-
-Final structure location, capacity, foundation, embankment,
-spillway and hydraulic design require field survey and engineering
-verification.
+Rainfall values retain the information content of the original
+rainfall dataset even when stored on a 30-m analysis grid.
 """
     )
 
 
 # ============================================================
-# NEW ASSESSMENT
+# 27. RESET
 # ============================================================
 
 st.markdown("---")
 
 
 if st.button(
-
     "🔄 Start New Farmer Assessment",
-
     use_container_width=True,
-
 ):
 
-    clear_field()
+    reset_assessment()
 
     st.rerun()

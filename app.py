@@ -483,50 +483,176 @@ def extract_record_fields(record, mapping_dict):
 
 
 # ============================================================
-# 12. LULC SUMMARY
+# 12. ROBUST FIELD LULC CLASSIFICATION
 # ============================================================
 
+def canonical_lulc_name(value):
+    """Normalize different source spellings to the GeoPond-DSS classes."""
+    text = safe_text(value, default="Unknown")
+    key = norm_name(text)
+
+    mapping = {
+        "cropland": "Crop land",
+        "crop": "Crop land",
+        "agriculture": "Crop land",
+        "agriculturalland": "Crop land",
+        "plantation": "Plantation",
+        "shiftingcultivation": "Shifting Cultivation",
+        "jhum": "Shifting Cultivation",
+        "scrub": "Scrub land",
+        "scrubland": "Scrub land",
+        "forestopen": "Forest Open",
+        "openforest": "Forest Open",
+        "forestmoderatelydense": "Forest Moderately Dense",
+        "moderatelydenseforest": "Forest Moderately Dense",
+        "forestdense": "Forest Dense",
+        "denseforest": "Forest Dense",
+        "builtup": "Built up",
+        "builtuparea": "Built up",
+        "settlement": "Built up",
+        "waterbody": "Waterbody",
+        "water": "Waterbody",
+        "riverstream": "River/Stream",
+        "river": "River/Stream",
+        "stream": "River/Stream",
+    }
+    return mapping.get(key, text)
+
+
 def mapped_lulc_summary(field_geojson):
+    """
+    Area-weighted LULC composition for the drawn farmer field.
+
+    Important changes from the earlier implementation:
+    - all area calculations are done in EPSG:32646 (metres), not degrees;
+    - a small inward-buffered core is used for classification to reduce
+      boundary sliver contamination;
+    - class labels are normalized;
+    - field coverage and dominant-class confidence are returned.
+    """
     if lulc_utm is None or lulc_utm.empty or lulc_utm.crs is None:
-        return []
-    lulc_col = first_matching_column(lulc_utm.columns, ["LULC_2022", "LULC", "Class", "class_name"])
+        return {
+            "composition": [], "dominant": "Unknown",
+            "confidence": 0.0, "coverage": 0.0,
+            "classification": "Unverified",
+        }
+
+    lulc_col = first_matching_column(
+        lulc_utm.columns,
+        ["LULC_2022", "LULC_2021", "LULC", "Class", "class_name", "legend", "category"]
+    )
     if not lulc_col:
-        return []
+        return {
+            "composition": [], "dominant": "Unknown",
+            "confidence": 0.0, "coverage": 0.0,
+            "classification": "Unverified",
+        }
 
-    field_geom = geometry_gdf(field_geojson).to_crs(lulc_utm.crs).geometry.iloc[0]
+    # Always compute areas in the working metric CRS.
+    field_full = geometry_gdf(field_geojson).to_crs(WORKING_CRS).geometry.iloc[0]
+    if not field_full.is_valid:
+        field_full = field_full.buffer(0)
+    field_area = float(field_full.area)
+    if field_area <= 0:
+        return {
+            "composition": [], "dominant": "Unknown",
+            "confidence": 0.0, "coverage": 0.0,
+            "classification": "Unverified",
+        }
+
+    # Use an inward core to reduce accidental classification from polygons
+    # touching the GPS-drawn boundary. For very small/irregular fields, fall
+    # back to the full field.
+    core_buffer_m = min(5.0, max(1.0, 0.02 * math.sqrt(field_area)))
+    field_core = field_full.buffer(-core_buffer_m)
+    if field_core.is_empty or field_core.area < 0.35 * field_area:
+        field_core = field_full
+
+    lulc_metric = lulc_utm.to_crs(WORKING_CRS)
+
     try:
-        ids = list(lulc_utm.sindex.intersection(field_geom.bounds))
-        candidates = lulc_utm.iloc[ids].copy() if ids else lulc_utm.copy()
+        ids = list(lulc_metric.sindex.intersection(field_full.bounds))
+        candidates = lulc_metric.iloc[ids].copy() if ids else lulc_metric.iloc[0:0].copy()
     except Exception:
-        candidates = lulc_utm.copy()
+        candidates = lulc_metric.copy()
 
-    candidates = candidates[candidates.intersects(field_geom)].copy()
     if candidates.empty:
-        return []
+        return {
+            "composition": [], "dominant": "Unknown",
+            "confidence": 0.0, "coverage": 0.0,
+            "classification": "No GIS coverage",
+        }
+
+    candidates = candidates[candidates.intersects(field_full)].copy()
+    if candidates.empty:
+        return {
+            "composition": [], "dominant": "Unknown",
+            "confidence": 0.0, "coverage": 0.0,
+            "classification": "No GIS coverage",
+        }
 
     try:
         candidates["geometry"] = candidates.geometry.make_valid()
     except Exception:
         candidates["geometry"] = candidates.geometry.buffer(0)
 
-    candidates["_area"] = candidates.geometry.intersection(field_geom).area
-    grouped = candidates.groupby(lulc_col, dropna=False)["_area"].sum().reset_index()
-    total = float(grouped["_area"].sum())
-    if total <= 0:
-        return []
+    candidates["_class"] = candidates[lulc_col].apply(canonical_lulc_name)
+    candidates["_full_area"] = candidates.geometry.intersection(field_full).area
+    candidates["_core_area"] = candidates.geometry.intersection(field_core).area
 
-    grouped["Area (ha)"] = grouped["_area"] / 10000.0
-    grouped["Percent"] = grouped["_area"] / total * 100.0
-    grouped = grouped.sort_values("Percent", ascending=False)
+    # Full-field composition is what is shown to the user.
+    grouped_full = (
+        candidates.groupby("_class", dropna=False)["_full_area"]
+        .sum().reset_index()
+    )
+    mapped_area = float(grouped_full["_full_area"].sum())
+    coverage = min(100.0, 100.0 * mapped_area / field_area) if field_area else 0.0
 
-    return [
+    grouped_full["Area (ha)"] = grouped_full["_full_area"] / 10000.0
+    grouped_full["Percent of field"] = grouped_full["_full_area"] / field_area * 100.0
+    grouped_full = grouped_full[grouped_full["_full_area"] > 0.5].copy()
+    grouped_full = grouped_full.sort_values("_full_area", ascending=False)
+
+    composition = [
         {
-            "LULC": safe_text(row[lulc_col]),
+            "LULC": safe_text(row["_class"]),
             "Area (ha)": round(float(row["Area (ha)"]), 3),
-            "Percent": round(float(row["Percent"]), 1),
+            "Percent of field": round(float(row["Percent of field"]), 1),
         }
-        for _, row in grouped.iterrows()
+        for _, row in grouped_full.iterrows()
     ]
+
+    # Dominant class is determined from the inward core where possible.
+    grouped_core = (
+        candidates.groupby("_class", dropna=False)["_core_area"]
+        .sum().reset_index().sort_values("_core_area", ascending=False)
+    )
+    core_total = float(grouped_core["_core_area"].sum())
+    if grouped_core.empty or core_total <= 0:
+        dominant = "Unknown"
+        confidence = 0.0
+    else:
+        dominant = safe_text(grouped_core.iloc[0]["_class"])
+        confidence = float(grouped_core.iloc[0]["_core_area"] / core_total * 100.0)
+
+    # Do not force a categorical answer when the GIS layer is mixed or poorly
+    # covering the field. This is especially important for small farm parcels.
+    if coverage < 70.0:
+        classification = "Unverified"
+    elif confidence >= 70.0:
+        classification = dominant
+    elif confidence >= 50.0:
+        classification = f"Mixed — mainly {dominant}"
+    else:
+        classification = "Mixed / uncertain"
+
+    return {
+        "composition": composition,
+        "dominant": dominant,
+        "confidence": confidence,
+        "coverage": coverage,
+        "classification": classification,
+    }
 
 
 # ============================================================
@@ -965,42 +1091,68 @@ field = st.session_state.field_geometry
 
 if field:
     area_ha = field_area_ha(field)
-    lulc_comp = mapped_lulc_summary(field)
-    mapped_lulc = lulc_comp[0]["LULC"] if lulc_comp else "Unknown"
+    lulc_result = mapped_lulc_summary(field)
+    lulc_comp = lulc_result["composition"]
+    mapped_lulc = lulc_result["classification"]
+    mapped_lulc_dominant = lulc_result["dominant"]
+    lulc_confidence = lulc_result["confidence"]
+    lulc_coverage = lulc_result["coverage"]
 
     st.success(f"✅ Farmer field captured successfully: {area_ha:.3f} ha")
     c1, c2 = st.columns(2)
     c1.metric("Field Area", f"{area_ha:.3f} ha")
-    c2.metric("GIS-Mapped LULC", mapped_lulc)
+    c2.metric("2021 GIS LULC", mapped_lulc)
+
+    c3, c4 = st.columns(2)
+    c3.metric("Dominant mapped class", mapped_lulc_dominant)
+    c4.metric("GIS class confidence", f"{lulc_confidence:.0f}%")
+
+    if lulc_coverage < 95:
+        st.info(
+            f"The detailed LULC layer covers about **{lulc_coverage:.1f}%** of the drawn field. "
+            "The GIS class is therefore treated as supporting information rather than current ground truth."
+        )
 
     LAND_USE_OPTIONS = [
         "Crop land", "Plantation", "Shifting Cultivation", "Scrub land", "Forest Open",
         "Forest Moderately Dense", "Forest Dense", "Built up", "Waterbody", "River/Stream"
     ]
+
+    # Current farmer/field confirmation has priority.  Only use the mapped
+    # dominant class as the initial suggestion when it is sufficiently clear.
     if st.session_state.current_lulc in LAND_USE_OPTIONS:
         default_idx = LAND_USE_OPTIONS.index(st.session_state.current_lulc)
-    elif mapped_lulc in LAND_USE_OPTIONS:
-        default_idx = LAND_USE_OPTIONS.index(mapped_lulc)
+    elif mapped_lulc_dominant in LAND_USE_OPTIONS and lulc_confidence >= 70 and lulc_coverage >= 70:
+        default_idx = LAND_USE_OPTIONS.index(mapped_lulc_dominant)
     else:
         default_idx = 0
 
     current_lulc = st.selectbox(
-        "🌾 Confirm Present Land Use",
+        "🌾 Confirm Current Field Land Use",
         LAND_USE_OPTIONS,
         index=default_idx,
-        help="If mapped LULC differs from the current field condition, select the present land use observed in the field.",
+        help=(
+            "The GIS layer is a mapped reference layer and may be outdated or locally misaligned. "
+            "For farm-level planning, confirm what is actually present in the field now."
+        ),
     )
     st.session_state.current_lulc = current_lulc
 
-    if current_lulc != mapped_lulc:
+    if mapped_lulc_dominant != "Unknown" and current_lulc != mapped_lulc_dominant:
         st.warning(
-            f"GIS layer indicates **{mapped_lulc}**, while present land use is confirmed as **{current_lulc}**. "
-            "GeoPond-DSS retains the GIS class but uses the confirmed present land use for planning."
+            f"The 2021 GIS layer is dominated by **{mapped_lulc_dominant}** "
+            f"({lulc_confidence:.0f}% of the mapped field core), whereas the current field use is "
+            f"confirmed as **{current_lulc}**. GeoPond-DSS uses the **confirmed current land use** "
+            "for farm-pond planning and retains the GIS result only for traceability."
         )
 
     if lulc_comp:
-        with st.expander("🗺️ LULC composition inside field"):
+        with st.expander("🗺️ Area-weighted LULC composition inside the drawn field"):
             st.dataframe(pd.DataFrame(lulc_comp), use_container_width=True, hide_index=True)
+            st.caption(
+                "Percentages are calculated from polygon overlap in UTM Zone 46N (metres). "
+                "A small inward field core is used only for deciding the dominant class, reducing edge/sliver effects."
+            )
 
 
 # ============================================================
@@ -1118,6 +1270,9 @@ if field:
                 "village": village,
                 "field_area": area_ha,
                 "mapped_lulc": mapped_lulc,
+                "mapped_lulc_dominant": mapped_lulc_dominant,
+                "lulc_confidence": lulc_confidence,
+                "lulc_coverage": lulc_coverage,
                 "current_lulc": current_lulc,
                 "rainfall": rainfall,
                 "mean_runoff": mean_runoff,
@@ -1301,7 +1456,10 @@ if assessment:
         st.write("**Farmer:**", assessment["farmer"] or "Not entered")
         st.write("**Village / Locality:**", assessment["village"] or "Not entered")
         st.write("**Current land use:**", assessment["current_lulc"])
-        st.write("**GIS-mapped LULC:**", assessment["mapped_lulc"])
+        st.write("**2021 GIS LULC classification:**", assessment["mapped_lulc"])
+        st.write("**Dominant mapped class:**", assessment.get("mapped_lulc_dominant", "Unknown"))
+        st.write("**GIS class confidence:**", f"{assessment.get('lulc_confidence', 0.0):.1f}%")
+        st.write("**GIS field coverage:**", f"{assessment.get('lulc_coverage', 0.0):.1f}%")
         st.write("**CN-II:**", round(assessment["cn"], 1) if np.isfinite(assessment["cn"]) else "No data")
         st.write("**Runoff coefficient:**", round(assessment["runoff_coefficient"], 3) if np.isfinite(assessment["runoff_coefficient"]) else "No data")
         st.write("**Drainage density at site:**", round(site["drainage_density"], 3))
@@ -1330,8 +1488,11 @@ if assessment:
         "Farmer": assessment["farmer"],
         "Village": assessment["village"],
         "Field_Area_ha": assessment["field_area"],
-        "GIS_LULC": assessment["mapped_lulc"],
-        "Confirmed_Land_Use": assessment["current_lulc"],
+        "GIS_LULC_Classification": assessment["mapped_lulc"],
+        "GIS_Dominant_LULC": assessment.get("mapped_lulc_dominant", "Unknown"),
+        "GIS_LULC_Confidence_percent": assessment.get("lulc_confidence", np.nan),
+        "GIS_LULC_Coverage_percent": assessment.get("lulc_coverage", np.nan),
+        "Confirmed_Current_Land_Use": assessment["current_lulc"],
         "Rainfall_mm_year": assessment["rainfall"],
         "Mean_Runoff_mm": assessment["mean_runoff"],
         "Dependable_Runoff_mm": assessment["dependable_runoff"],

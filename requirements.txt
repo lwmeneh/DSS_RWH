@@ -1,6 +1,7 @@
 streamlit
 streamlit-folium
 folium
+branca
 numpy
 pandas
 geopandas
@@ -8,5 +9,4 @@ rasterio
 shapely
 pyproj
 pyogrio
-pysheds
 reportlab

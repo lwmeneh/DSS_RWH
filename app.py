@@ -6,7 +6,12 @@
 # ICAR Research Complex for NEH Region
 # Umiam, Meghalaya
 #
-# ADVANCED WEB-GIS USER INTERFACE
+# FAST + ADVANCED WEB-GIS VERSION
+# ============================================================
+
+
+# ============================================================
+# 1. IMPORTS
 # ============================================================
 
 from pathlib import Path
@@ -19,9 +24,17 @@ import pandas as pd
 import geopandas as gpd
 
 import rasterio
-from rasterio.mask import mask as rio_mask
+
+from rasterio.mask import (
+    mask as rio_mask
+)
+
 from rasterio.transform import xy
-from rasterio.warp import reproject, Resampling
+
+from rasterio.warp import (
+    reproject,
+    Resampling,
+)
 
 import streamlit as st
 
@@ -32,11 +45,12 @@ from folium.plugins import (
     Fullscreen,
     LocateControl,
     MeasureControl,
-    MiniMap,
     MousePosition,
 )
 
-from streamlit_folium import st_folium
+from streamlit_folium import (
+    st_folium
+)
 
 from shapely.geometry import (
     shape,
@@ -45,13 +59,17 @@ from shapely.geometry import (
     box,
 )
 
-from shapely.ops import unary_union
+from shapely.ops import (
+    unary_union
+)
 
-from pyproj import Transformer
+from pyproj import (
+    Transformer
+)
 
 
 # ============================================================
-# 1. PAGE CONFIGURATION
+# 2. PAGE CONFIG
 # ============================================================
 
 st.set_page_config(
@@ -63,10 +81,14 @@ st.set_page_config(
 
 
 # ============================================================
-# 2. PROJECT PATHS
+# 3. PROJECT PATHS
 # ============================================================
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = (
+    Path(__file__)
+    .resolve()
+    .parent
+)
 
 CACHE_DIR = (
     BASE_DIR
@@ -85,7 +107,9 @@ ICAR_LOGO = (
 )
 
 
-WORKING_CRS = "EPSG:32646"
+WORKING_CRS = (
+    "EPSG:32646"
+)
 
 MAP_CENTER = [
     25.88,
@@ -96,7 +120,7 @@ MAP_ZOOM = 12
 
 
 # ============================================================
-# HYDROLOGICAL / TERRAIN RASTERS
+# RASTERS
 # ============================================================
 
 SLOPE_RASTER = (
@@ -156,7 +180,7 @@ RUNOFF_COEFFICIENT_RASTER = (
 
 
 # ============================================================
-# VECTOR DATA
+# VECTORS
 # ============================================================
 
 BOUNDARY_GPKG = (
@@ -169,16 +193,22 @@ STREAMS_GPKG = (
     / "streams_utm46.gpkg"
 )
 
+
+# 2022 LULC
 LULC_2022_GPKG = (
     CACHE_DIR
     / "lulc_2021_10k_clean_utm46.gpkg"
 )
 
+
+# Optional projected 2025
 PROJECTED_LULC_2025_SHP = (
     CACHE_DIR
     / "2025_Projected_LULC.shp"
 )
 
+
+# Thematic data
 SOIL_GPKG = (
     CACHE_DIR
     / "Soil_Meghalaya_50k.gpkg"
@@ -211,7 +241,7 @@ SOIL_C_HORIZON_GPKG = (
 
 
 # ============================================================
-# 3. ADVANCED UI CSS
+# 4. ADVANCED CSS
 # ============================================================
 
 st.markdown(
@@ -221,27 +251,29 @@ st.markdown(
 html,
 body,
 [class*="css"] {
+
     font-family:
-        Inter,
         "Segoe UI",
         Arial,
         sans-serif;
+
 }
 
 
-/* =========================================================
-   APPLICATION
-========================================================= */
+/* ---------------------------------------------------------
+APP
+--------------------------------------------------------- */
 
 [data-testid="stAppViewContainer"] {
 
     background:
         linear-gradient(
             180deg,
-            #edf4f2 0%,
-            #f8fbfa 20%,
-            #ffffff 55%
+            #eef5f3 0%,
+            #f8fbfa 22%,
+            #ffffff 60%
         );
+
 }
 
 
@@ -252,49 +284,48 @@ body,
             255,
             255,
             255,
-            0.65
+            .62
         );
 
     backdrop-filter:
-        blur(12px);
+        blur(10px);
+
 }
 
 
 .block-container {
 
     max-width:
-        1800px;
+        1750px;
 
     padding-top:
-        0.20rem;
+        .2rem;
 
     padding-left:
-        0.75rem;
+        .7rem;
 
     padding-right:
-        0.75rem;
+        .7rem;
 
     padding-bottom:
         3rem;
+
 }
 
 
-/* =========================================================
-   HEADER
-========================================================= */
+/* ---------------------------------------------------------
+HEADER
+--------------------------------------------------------- */
 
 .gp-header {
 
     background:
         linear-gradient(
             115deg,
-            #053c32 0%,
-            #05694f 46%,
-            #07996f 100%
+            #043d32 0%,
+            #056b51 47%,
+            #07976f 100%
         );
-
-    padding:
-        18px 25px;
 
     color:
         white;
@@ -302,13 +333,16 @@ body,
     border-radius:
         0 0 18px 18px;
 
+    padding:
+        17px 24px;
+
     box-shadow:
-        0 6px 22px
+        0 6px 20px
         rgba(
             0,
             60,
             48,
-            0.23
+            .22
         );
 
 }
@@ -323,17 +357,18 @@ body,
         center;
 
     gap:
-        20px;
+        18px;
+
 }
 
 
 .gp-logo img {
 
     width:
-        88px;
+        82px;
 
     height:
-        88px;
+        82px;
 
     object-fit:
         contain;
@@ -341,11 +376,12 @@ body,
     background:
         white;
 
+    padding:
+        6px;
+
     border-radius:
         12px;
 
-    padding:
-        6px;
 }
 
 
@@ -354,14 +390,15 @@ body,
     font-size:
         11px;
 
-    font-weight:
-        800;
-
     letter-spacing:
         .11em;
 
+    font-weight:
+        800;
+
     opacity:
-        .80;
+        .8;
+
 }
 
 
@@ -375,6 +412,7 @@ body,
 
     margin-top:
         2px;
+
 }
 
 
@@ -390,7 +428,8 @@ body,
         1.05;
 
     margin-top:
-        7px;
+        6px;
+
 }
 
 
@@ -404,6 +443,7 @@ body,
 
     opacity:
         .92;
+
 }
 
 
@@ -412,11 +452,11 @@ body,
     display:
         inline-block;
 
-    margin-top:
-        9px;
-
     padding:
         5px 11px;
+
+    margin-top:
+        8px;
 
     background:
         rgba(
@@ -434,60 +474,53 @@ body,
 
     font-weight:
         650;
+
 }
 
 
-/* =========================================================
-   NAVIGATION
-========================================================= */
+/* ---------------------------------------------------------
+NAV
+--------------------------------------------------------- */
 
 .gp-nav {
 
     display:
         flex;
 
-    gap:
-        6px;
-
     align-items:
         center;
 
-    overflow-x:
-        auto;
+    gap:
+        5px;
 
     background:
-        #173e38;
-
-    padding:
-        8px;
+        #163d37;
 
     border-radius:
         11px;
 
-    margin:
-        8px 0 13px 0;
+    padding:
+        7px;
 
-    box-shadow:
-        0 3px 11px
-        rgba(
-            0,
-            0,
-            0,
-            .11
-        );
+    margin:
+        8px 0 12px 0;
+
+    overflow-x:
+        auto;
+
 }
 
 
 .gp-nav-item {
 
     padding:
-        9px 14px;
+        8px 13px;
 
     border-radius:
         7px;
 
     color:
-        #dceae7;
+        #dceae6;
 
     font-size:
         12px;
@@ -497,50 +530,50 @@ body,
 
     white-space:
         nowrap;
+
 }
 
 
 .gp-nav-active {
 
+    background:
+        #07936c;
+
     color:
         white;
 
-    background:
-        #07966f;
 }
 
 
-.gp-nav-status {
+.gp-online {
 
     margin-left:
         auto;
 
     background:
-        #102e2a;
+        #102f2a;
 
     color:
-        #71eab3;
-
-    padding:
-        6px 11px;
+        #77eab6;
 
     border-radius:
         50px;
 
+    padding:
+        6px 10px;
+
     font-size:
-        11px;
+        10px;
 
     font-weight:
-        700;
+        750;
 
-    white-space:
-        nowrap;
 }
 
 
-/* =========================================================
-   PANEL
-========================================================= */
+/* ---------------------------------------------------------
+PANELS
+--------------------------------------------------------- */
 
 .gp-panel {
 
@@ -549,29 +582,33 @@ body,
 
     border:
         1px solid
-        #d8e5e1;
+        #d9e5e2;
 
     border-radius:
-        14px;
+        13px;
 
     padding:
-        14px;
+        13px 15px;
 
     margin-bottom:
-        10px;
+        9px;
 
     box-shadow:
-        0 3px 12px
+        0 3px 10px
         rgba(
-            25,
-            65,
-            58,
-            .06
+            20,
+            60,
+            55,
+            .05
         );
+
 }
 
 
 .gp-panel-title {
+
+    color:
+        #16483d;
 
     font-size:
         14px;
@@ -579,62 +616,57 @@ body,
     font-weight:
         800;
 
-    color:
-        #16463b;
-
-    margin-bottom:
-        9px;
-
     padding-bottom:
         7px;
+
+    margin-bottom:
+        8px;
 
     border-bottom:
         1px solid
         #e4ece9;
+
 }
 
 
-/* =========================================================
-   WORKFLOW CARD
-========================================================= */
+/* ---------------------------------------------------------
+WORKFLOW
+--------------------------------------------------------- */
 
 .gp-workflow {
 
     background:
-        linear-gradient(
-            120deg,
-            #e9f5fc,
-            #f6fbfd
-        );
-
-    color:
-        #245970;
+        #edf8fd;
 
     border:
         1px solid
-        #d3e8f2;
+        #d2e9f3;
 
     border-left:
         5px solid
-        #1682b5;
+        #1782b3;
+
+    color:
+        #25586e;
 
     border-radius:
         12px;
 
     padding:
-        12px 15px;
+        12px 14px;
 
     line-height:
-        1.55;
+        1.5;
 
     margin-bottom:
-        11px;
+        10px;
+
 }
 
 
-/* =========================================================
-   DECISION CARD
-========================================================= */
+/* ---------------------------------------------------------
+DECISION CARD
+--------------------------------------------------------- */
 
 .decision-card {
 
@@ -648,23 +680,24 @@ body,
     color:
         white;
 
-    padding:
-        16px 18px;
-
     border-radius:
-        15px;
+        14px;
+
+    padding:
+        15px 17px;
 
     margin:
         9px 0 12px 0;
 
     box-shadow:
-        0 5px 17px
+        0 5px 15px
         rgba(
-            0,
+            5,
             65,
             52,
-            .18
+            .16
         );
+
 }
 
 
@@ -673,27 +706,29 @@ body,
     font-size:
         10px;
 
-    letter-spacing:
-        .13em;
-
     font-weight:
         800;
 
+    letter-spacing:
+        .12em;
+
     opacity:
         .72;
+
 }
 
 
 .decision-value {
 
     font-size:
-        25px;
+        24px;
 
     font-weight:
         850;
 
     margin-top:
         3px;
+
 }
 
 
@@ -707,12 +742,13 @@ body,
 
     margin-top:
         3px;
+
 }
 
 
-/* =========================================================
-   GIS CARD
-========================================================= */
+/* ---------------------------------------------------------
+GIS CARD
+--------------------------------------------------------- */
 
 .gis-card {
 
@@ -721,32 +757,33 @@ body,
 
     border:
         1px solid
-        #d8e6e1;
+        #d8e5e1;
 
     border-radius:
-        15px;
+        14px;
 
     padding:
-        15px 17px;
-
-    margin:
-        10px 0;
+        14px 16px;
 
     box-shadow:
-        0 3px 11px
+        0 3px 10px
         rgba(
             20,
-            70,
             60,
-            .06
+            55,
+            .05
         );
+
+    margin:
+        9px 0;
+
 }
 
 
 .gis-card-title {
 
     color:
-        #075f4b;
+        #07614d;
 
     font-size:
         15px;
@@ -756,6 +793,7 @@ body,
 
     margin-bottom:
         9px;
+
 }
 
 
@@ -775,6 +813,7 @@ body,
 
     gap:
         8px;
+
 }
 
 
@@ -787,7 +826,8 @@ body,
         9px;
 
     padding:
-        9px 11px;
+        9px 10px;
+
 }
 
 
@@ -797,10 +837,11 @@ body,
         block;
 
     color:
-        #71827c;
+        #71817c;
 
     font-size:
         10px;
+
 }
 
 
@@ -810,53 +851,20 @@ body,
         block;
 
     color:
-        #193e36;
+        #183f36;
 
     font-size:
         14px;
 
     margin-top:
         2px;
+
 }
 
 
-/* =========================================================
-   RESULT CARDS
-========================================================= */
-
-.result-card {
-
-    background:
-        white;
-
-    border:
-        1px solid
-        #d8e6e2;
-
-    border-left:
-        5px solid
-        #087c61;
-
-    border-radius:
-        12px;
-
-    padding:
-        14px;
-
-    box-shadow:
-        0 2px 9px
-        rgba(
-            15,
-            60,
-            50,
-            .05
-        );
-}
-
-
-/* =========================================================
-   METRICS
-========================================================= */
+/* ---------------------------------------------------------
+METRICS
+--------------------------------------------------------- */
 
 [data-testid="stMetric"] {
 
@@ -865,16 +873,16 @@ body,
 
     border:
         1px solid
-        #d8e3e0;
+        #d8e4e0;
 
     border-radius:
-        13px;
+        12px;
 
     padding:
-        11px 13px;
+        10px 12px;
 
     box-shadow:
-        0 2px 8px
+        0 2px 7px
         rgba(
             20,
             60,
@@ -882,40 +890,23 @@ body,
             .05
         );
 
-    transition:
-        all .18s ease;
-}
-
-
-[data-testid="stMetric"]:hover {
-
-    transform:
-        translateY(-2px);
-
-    box-shadow:
-        0 7px 17px
-        rgba(
-            20,
-            60,
-            55,
-            .10
-        );
 }
 
 
 [data-testid="stMetricValue"] {
 
     color:
-        #173f37;
+        #173f36;
 
     font-weight:
         800;
+
 }
 
 
-/* =========================================================
-   BUTTONS
-========================================================= */
+/* ---------------------------------------------------------
+BUTTON
+--------------------------------------------------------- */
 
 .stButton > button,
 .stDownloadButton > button {
@@ -924,7 +915,7 @@ body,
         100%;
 
     min-height:
-        49px;
+        48px;
 
     border-radius:
         10px;
@@ -934,6 +925,7 @@ body,
 
     font-weight:
         750;
+
 }
 
 
@@ -949,77 +941,36 @@ body,
         linear-gradient(
             90deg,
             #06765a,
-            #09a177
+            #09a176
         );
 
-    box-shadow:
-        0 5px 15px
-        rgba(
-            5,
-            120,
-            90,
-            .22
-        );
 }
 
 
-/* =========================================================
-   EXPANDERS
-========================================================= */
-
-[data-testid="stExpander"] {
-
-    background:
-        white;
-
-    border:
-        1px solid
-        #dae5e2;
-
-    border-radius:
-        12px;
-
-    overflow:
-        hidden;
-}
-
-
-/* =========================================================
-   TABS
-========================================================= */
+/* ---------------------------------------------------------
+TABS
+--------------------------------------------------------- */
 
 .stTabs [data-baseweb="tab-list"] {
-
-    gap:
-        5px;
-
-    padding:
-        5px;
 
     background:
         #edf4f2;
 
+    padding:
+        5px;
+
+    gap:
+        4px;
+
     border-radius:
-        11px;
+        10px;
+
 }
 
 
-.stTabs [data-baseweb="tab"] {
-
-    border-radius:
-        8px;
-
-    height:
-        42px;
-
-    font-weight:
-        650;
-}
-
-
-/* =========================================================
-   MOBILE
-========================================================= */
+/* ---------------------------------------------------------
+MOBILE
+--------------------------------------------------------- */
 
 @media only screen and (max-width:850px) {
 
@@ -1030,13 +981,7 @@ body,
 
         padding-right:
             .25rem;
-    }
 
-
-    .gp-header {
-
-        padding:
-            13px 11px;
     }
 
 
@@ -1048,18 +993,6 @@ body,
         text-align:
             center;
 
-        gap:
-            7px;
-    }
-
-
-    .gp-logo img {
-
-        width:
-            72px;
-
-        height:
-            72px;
     }
 
 
@@ -1067,20 +1000,26 @@ body,
 
         font-size:
             25px;
+
     }
 
 
-    .gp-institute {
+    .gp-logo img {
 
-        font-size:
-            13px;
+        width:
+            70px;
+
+        height:
+            70px;
+
     }
 
 
-    .gp-nav-status {
+    .gp-online {
 
         display:
             none;
+
     }
 
 
@@ -1094,20 +1033,7 @@ body,
                     1fr
                 )
             );
-    }
 
-
-    h1 {
-
-        font-size:
-            1.45rem !important;
-    }
-
-
-    h2 {
-
-        font-size:
-            1.2rem !important;
     }
 
 }
@@ -1119,33 +1045,8 @@ body,
 
 
 # ============================================================
-# 4. GENERAL UTILITIES
+# 5. GENERAL HELPERS
 # ============================================================
-
-def image_to_base64(
-    path
-):
-
-    try:
-
-        if not path.exists():
-
-            return None
-
-        return (
-            base64
-            .b64encode(
-                path.read_bytes()
-            )
-            .decode(
-                "utf-8"
-            )
-        )
-
-    except Exception:
-
-        return None
-
 
 def safe_text(
     value,
@@ -1208,11 +1109,15 @@ def first_matching_column(
 ):
 
     lookup = {
-        norm_name(c):
-        c
+
+        norm_name(
+            c
+        ):
+            c
 
         for c
         in columns
+
     }
 
     for candidate in candidates:
@@ -1230,27 +1135,58 @@ def first_matching_column(
     return None
 
 
+def image_to_base64(
+    path
+):
+
+    try:
+
+        if not path.exists():
+
+            return None
+
+        return (
+            base64
+            .b64encode(
+                path.read_bytes()
+            )
+            .decode(
+                "utf-8"
+            )
+        )
+
+    except Exception:
+
+        return None
+
+
 # ============================================================
-# 5. HEADER
+# 6. HEADER
 # ============================================================
 
-logo_b64 = image_to_base64(
-    ICAR_LOGO
+logo_base64 = (
+    image_to_base64(
+        ICAR_LOGO
+    )
 )
 
-if logo_b64:
+
+if logo_base64:
 
     logo_html = (
+
         '<div class="gp-logo">'
-        f'<img src="data:image/png;base64,{logo_b64}" '
-        'alt="ICAR Logo">'
+
+        f'<img src="data:image/png;base64,{logo_base64}">'
+
         '</div>'
+
     )
 
 else:
 
     logo_html = (
-        '<div style="font-size:55px;">🌾</div>'
+        '<div style="font-size:52px;">🌾</div>'
     )
 
 
@@ -1278,13 +1214,12 @@ GeoPond-DSS
 </div>
 
 <div class="gp-subtitle">
-Geospatial Pond Siting and Preliminary
-Design Decision Support System
+Geospatial Pond Siting and Preliminary Design
+Decision Support System
 </div>
 
 <div class="gp-tag">
-Ri Bhoi District • Meghalaya •
-Mobile GPS Enabled • Web-GIS Decision Support
+Ri Bhoi • Meghalaya • Mobile GPS • Web-GIS
 </div>
 
 </div>
@@ -1309,11 +1244,11 @@ Mobile GPS Enabled • Web-GIS Decision Support
 </div>
 
 <div class="gp-nav-item">
-📍 Site Screening
+📍 Site
 </div>
 
 <div class="gp-nav-item">
-📐 Pond Design
+📐 Design
 </div>
 
 <div class="gp-nav-item">
@@ -1321,11 +1256,11 @@ Mobile GPS Enabled • Web-GIS Decision Support
 </div>
 
 <div class="gp-nav-item">
-📄 Assessment
+📄 Report
 </div>
 
-<div class="gp-nav-status">
-● GIS DATABASE ONLINE
+<div class="gp-online">
+● SYSTEM READY
 </div>
 
 </div>
@@ -1335,7 +1270,7 @@ Mobile GPS Enabled • Web-GIS Decision Support
 
 
 # ============================================================
-# 6. REQUIRED GIS FILE CHECK
+# 7. REQUIRED FILE CHECK
 # ============================================================
 
 REQUIRED_FILES = [
@@ -1364,12 +1299,10 @@ REQUIRED_FILES = [
 
     BOUNDARY_GPKG,
 
-    STREAMS_GPKG,
-
 ]
 
 
-missing_files = [
+missing = [
 
     str(
         path.relative_to(
@@ -1385,7 +1318,7 @@ missing_files = [
 ]
 
 
-if missing_files:
+if missing:
 
     st.error(
         "GeoPond-DSS GIS database is incomplete."
@@ -1393,7 +1326,7 @@ if missing_files:
 
     st.code(
         "\n".join(
-            missing_files
+            missing
         )
     )
 
@@ -1401,169 +1334,199 @@ if missing_files:
 
 
 # ============================================================
-# 7. VECTOR LOADING
+# 8. FAST VECTOR READERS
 # ============================================================
 
 @st.cache_resource(
     show_spinner=False
 )
-def load_vector_utm(
-    path_string,
-    fallback_path_string=None,
+def read_full_vector(
+    path_string
 ):
 
-    candidates = [
-        Path(
-            path_string
-        )
-    ]
-
-    if fallback_path_string:
-
-        candidates.append(
-            Path(
-                fallback_path_string
-            )
-        )
-
-    path = next(
-        (
-            p
-
-            for p
-            in candidates
-
-            if p.exists()
-        ),
-        None,
+    path = Path(
+        path_string
     )
 
-    if path is None:
+    if not path.exists():
 
         return None
 
     try:
 
         gdf = gpd.read_file(
-            path
+            path,
+            engine="pyogrio",
         )
-
-        if gdf.empty:
-
-            return gdf
-
-        if gdf.crs is None:
-
-            return None
-
-        try:
-
-            invalid = (
-                ~gdf.geometry.is_valid
-            )
-
-            if invalid.any():
-
-                gdf = (
-                    gdf.copy()
-                )
-
-                gdf.loc[
-                    invalid,
-                    "geometry",
-                ] = (
-                    gdf.loc[
-                        invalid,
-                        "geometry",
-                    ]
-                    .make_valid()
-                )
-
-        except Exception:
-
-            pass
-
-        if (
-            gdf.crs
-            .to_epsg()
-            !=
-            32646
-        ):
-
-            gdf = gdf.to_crs(
-                WORKING_CRS
-            )
-
-        return gdf
 
     except Exception:
 
+        gdf = gpd.read_file(
+            path
+        )
+
+    if gdf.empty:
+
+        return gdf
+
+    if gdf.crs is None:
+
         return None
 
+    if (
+        gdf.crs.to_epsg()
+        !=
+        32646
+    ):
 
-boundary_utm = load_vector_utm(
-    str(
-        BOUNDARY_GPKG
-    )
+        gdf = gdf.to_crs(
+            WORKING_CRS
+        )
+
+    return gdf
+
+
+@st.cache_data(
+    show_spinner=False,
+    max_entries=40,
 )
+def read_bbox_vector(
+    path_string,
+    bounds_tuple,
+):
 
-streams_utm = load_vector_utm(
-    str(
-        STREAMS_GPKG
+    path = Path(
+        path_string
     )
-)
 
-lulc_2022_utm = load_vector_utm(
-    str(
-        LULC_2022_GPKG
+    if not path.exists():
+
+        return None
+
+    bbox_value = tuple(
+        float(
+            v
+        )
+        for v
+        in bounds_tuple
     )
-)
 
-projected_lulc_2025_utm = (
-    load_vector_utm(
-        str(
-            PROJECTED_LULC_2025_SHP
+    try:
+
+        gdf = gpd.read_file(
+
+            path,
+
+            bbox=
+                bbox_value,
+
+            engine=
+                "pyogrio",
+
+        )
+
+    except Exception:
+
+        try:
+
+            gdf = gpd.read_file(
+
+                path,
+
+                bbox=
+                    bbox_value,
+
+            )
+
+        except Exception:
+
+            return None
+
+    if (
+        gdf is None
+        or
+        gdf.empty
+    ):
+
+        return gdf
+
+    if gdf.crs is None:
+
+        return None
+
+    if (
+        gdf.crs.to_epsg()
+        !=
+        32646
+    ):
+
+        gdf = gdf.to_crs(
+            WORKING_CRS
+        )
+
+    return gdf
+
+
+def read_bbox_with_fallback(
+    primary_path,
+    fallback_path,
+    bounds_tuple,
+):
+
+    result = (
+        read_bbox_vector(
+
+            str(
+                primary_path
+            ),
+
+            tuple(
+                bounds_tuple
+            ),
+
         )
     )
-)
 
-soil_gdf = load_vector_utm(
+    if (
+        result is None
+        or
+        result.empty
+    ):
 
-    str(
-        SOIL_GPKG
-    ),
+        if fallback_path.exists():
 
-    str(
-        SOIL_SHP
-    ),
-)
+            result = (
+                read_bbox_vector(
 
-geomorph_gdf = load_vector_utm(
-    str(
-        GEOMORPHOLOGY_GPKG
-    )
-)
+                    str(
+                        fallback_path
+                    ),
 
-lithology_gdf = load_vector_utm(
-    str(
-        LITHOLOGY_GPKG
-    )
-)
+                    tuple(
+                        bounds_tuple
+                    ),
 
-shear_gdf = load_vector_utm(
-    str(
-        SHEAR_ZONE_GPKG
-    )
-)
+                )
+            )
 
-c_horizon_gdf = load_vector_utm(
-    str(
-        SOIL_C_HORIZON_GPKG
+    return result
+
+
+# ============================================================
+# ONLY DISTRICT BOUNDARY LOADS AT STARTUP
+# ============================================================
+
+boundary_utm = (
+    read_full_vector(
+        str(
+            BOUNDARY_GPKG
+        )
     )
 )
 
 
 boundary_wgs = None
+
 
 if (
     boundary_utm
@@ -1581,103 +1544,10 @@ if (
 
 
 # ============================================================
-# GIS STATUS
+# 9. SESSION STATE
 # ============================================================
 
-THEMATIC_STATUS = {
-
-    "Soil":
-        soil_gdf
-        is not None
-        and
-        not soil_gdf.empty,
-
-    "Geomorphology":
-        geomorph_gdf
-        is not None
-        and
-        not geomorph_gdf.empty,
-
-    "Lithology":
-        lithology_gdf
-        is not None
-        and
-        not lithology_gdf.empty,
-
-    "Shear Zone":
-        shear_gdf
-        is not None
-        and
-        not shear_gdf.empty,
-
-    "C-Horizon":
-        c_horizon_gdf
-        is not None
-        and
-        not c_horizon_gdf.empty,
-}
-
-
-with st.expander(
-    "🧭 GIS Database & CRS Status",
-    expanded=False,
-):
-
-    st.write(
-        "**Analysis CRS:** "
-        "EPSG:32646 — WGS 84 / UTM Zone 46N"
-    )
-
-    for name, loaded in (
-        THEMATIC_STATUS.items()
-    ):
-
-        st.write(
-            (
-                "✅ "
-                if loaded
-                else
-                "❌ "
-            )
-            +
-            name
-        )
-
-    lulc_ok = (
-
-        lulc_2022_utm
-        is not None
-
-        and
-
-        not lulc_2022_utm.empty
-
-        and
-
-        "LULC_2022"
-        in
-        lulc_2022_utm.columns
-
-    )
-
-    st.write(
-        (
-            "✅ "
-            if lulc_ok
-            else
-            "❌ "
-        )
-        +
-        "Mapped 2022 LULC — "
-        "attribute: LULC_2022"
-    )
-
-
-# ============================================================
-# 8. SESSION STATE
-# ============================================================
-
-SESSION_DEFAULTS = {
+for key, default in {
 
     "field_geometry":
         None,
@@ -1688,12 +1558,7 @@ SESSION_DEFAULTS = {
     "current_lulc":
         None,
 
-}
-
-
-for key, value in (
-    SESSION_DEFAULTS.items()
-):
+}.items():
 
     if key not in (
         st.session_state
@@ -1701,7 +1566,7 @@ for key, value in (
 
         st.session_state[
             key
-        ] = value
+        ] = default
 
 
 def reset_assessment():
@@ -1720,7 +1585,7 @@ def reset_assessment():
 
 
 # ============================================================
-# 9. GEOMETRY HELPERS
+# 10. GEOMETRY HELPERS
 # ============================================================
 
 def geometry_gdf(
@@ -1731,7 +1596,8 @@ def geometry_gdf(
     return gpd.GeoDataFrame(
 
         {
-            "id": [1]
+            "id":
+                [1]
         },
 
         geometry=[
@@ -1740,7 +1606,9 @@ def geometry_gdf(
             )
         ],
 
-        crs=crs,
+        crs=
+            crs,
+
     )
 
 
@@ -1749,14 +1617,18 @@ def to_utm_geometry(
 ):
 
     return (
+
         geometry_gdf(
             geometry_geojson
         )
+
         .to_crs(
             WORKING_CRS
         )
+
         .geometry
         .iloc[0]
+
     )
 
 
@@ -1765,13 +1637,15 @@ def field_area_ha(
 ):
 
     return (
-        float(
-            to_utm_geometry(
-                geometry_geojson
-            ).area
+
+        to_utm_geometry(
+            geometry_geojson
         )
+        .area
+
         /
         10000.0
+
     )
 
 
@@ -1784,12 +1658,15 @@ def get_last_polygon(
         return None
 
     drawings = (
-        map_output
-        .get(
+
+        map_output.get(
             "all_drawings"
         )
+
         or
+
         []
+
     )
 
     polygon = None
@@ -1800,32 +1677,30 @@ def get_last_polygon(
 
             continue
 
-        geom = (
-            drawing
-            .get(
+        geometry = (
+            drawing.get(
                 "geometry",
-                {},
+                {}
             )
         )
 
-        if (
-            geom.get(
-                "type"
-            )
-            in
-            [
-                "Polygon",
-                "MultiPolygon",
-            ]
-        ):
+        if geometry.get(
+            "type"
+        ) in [
 
-            polygon = geom
+            "Polygon",
+
+            "MultiPolygon",
+
+        ]:
+
+            polygon = geometry
 
     return polygon
 
 
 # ============================================================
-# 10. RASTER HELPERS
+# 11. RASTER FUNCTIONS
 # ============================================================
 
 def raster_mean(
@@ -1833,8 +1708,10 @@ def raster_mean(
     field_geojson,
 ):
 
-    polygon = geometry_gdf(
-        field_geojson
+    polygon = (
+        geometry_gdf(
+            field_geojson
+        )
     )
 
     with rasterio.open(
@@ -1842,17 +1719,16 @@ def raster_mean(
     ) as src:
 
         geom = (
+
             polygon
+
             .to_crs(
                 src.crs
             )
+
             .geometry
             .iloc[0]
-        )
 
-        values = np.array(
-            [],
-            dtype=float,
         )
 
         try:
@@ -1867,13 +1743,17 @@ def raster_mean(
                     )
                 ],
 
-                crop=True,
+                crop=
+                    True,
 
-                indexes=1,
+                indexes=
+                    1,
 
-                filled=False,
+                filled=
+                    False,
 
-                all_touched=True,
+                all_touched=
+                    True,
 
             )
 
@@ -1909,55 +1789,9 @@ def raster_mean(
 
         except Exception:
 
-            pass
-
-        if len(
-            values
-        ) == 0:
-
-            centroid = (
-                geom.centroid
+            values = np.array(
+                []
             )
-
-            try:
-
-                sample = next(
-
-                    src.sample(
-
-                        [
-                            (
-                                centroid.x,
-                                centroid.y,
-                            )
-                        ],
-
-                        indexes=1,
-
-                        masked=True,
-
-                    )
-                )
-
-                sample = (
-                    np.asarray(
-                        sample,
-                        dtype=float,
-                    )
-                    .reshape(-1)
-                )
-
-                sample = sample[
-                    np.isfinite(
-                        sample
-                    )
-                ]
-
-                values = sample
-
-            except Exception:
-
-                pass
 
         if len(
             values
@@ -1985,9 +1819,13 @@ def sample_raster(
         transformer = (
             Transformer
             .from_crs(
+
                 WORKING_CRS,
+
                 src.crs,
+
                 always_xy=True,
+
             )
         )
 
@@ -2012,11 +1850,14 @@ def sample_raster(
                         )
                     ],
 
-                    indexes=1,
+                    indexes=
+                        1,
 
-                    masked=True,
+                    masked=
+                        True,
 
                 )
+
             )[0]
 
             if np.ma.is_masked(
@@ -2031,10 +1872,14 @@ def sample_raster(
 
             return (
                 value
+
                 if np.isfinite(
                     value
                 )
-                else np.nan
+
+                else
+
+                np.nan
             )
 
         except Exception:
@@ -2046,8 +1891,10 @@ def field_reference_grid(
     field_geojson
 ):
 
-    polygon = geometry_gdf(
-        field_geojson
+    polygon = (
+        geometry_gdf(
+            field_geojson
+        )
     )
 
     with rasterio.open(
@@ -2055,12 +1902,14 @@ def field_reference_grid(
     ) as src:
 
         geom = (
+
             polygon
             .to_crs(
                 src.crs
             )
             .geometry
             .iloc[0]
+
         )
 
         data, transform = rio_mask(
@@ -2073,13 +1922,17 @@ def field_reference_grid(
                 )
             ],
 
-            crop=True,
+            crop=
+                True,
 
-            indexes=1,
+            indexes=
+                1,
 
-            filled=False,
+            filled=
+                False,
 
-            all_touched=True,
+            all_touched=
+                True,
 
         )
 
@@ -2087,51 +1940,64 @@ def field_reference_grid(
             data
         ):
 
-            arr = (
+            array = (
+
                 data
+
                 .filled(
                     np.nan
                 )
+
                 .astype(
                     float
                 )
+
             )
 
             valid = (
+
                 ~np.ma
                 .getmaskarray(
                     data
                 )
+
             )
 
         else:
 
-            arr = (
-                data
-                .astype(
-                    float
-                )
+            array = data.astype(
+                float
             )
 
             valid = (
                 np.isfinite(
-                    arr
+                    array
                 )
             )
 
         return (
-            arr,
+
+            array,
+
             valid,
+
             transform,
+
             src.crs,
+
         )
 
 
 def raster_to_reference(
+
     raster_path,
+
     reference_shape,
+
     reference_transform,
+
     reference_crs,
+
 ):
 
     destination = np.full(
@@ -2140,7 +2006,8 @@ def raster_to_reference(
 
         np.nan,
 
-        dtype=np.float64,
+        dtype=
+            np.float64,
 
     )
 
@@ -2221,14 +2088,18 @@ def normalize_array(
             dtype=float,
         )
 
-    low = np.percentile(
-        values,
-        5,
+    low = float(
+        np.percentile(
+            values,
+            5,
+        )
     )
 
-    high = np.percentile(
-        values,
-        95,
+    high = float(
+        np.percentile(
+            values,
+            95,
+        )
     )
 
     if (
@@ -2263,13 +2134,14 @@ def normalize_array(
         ),
 
         0,
+
         1,
 
     )
 
 
 # ============================================================
-# 11. VECTOR LOOKUP HELPERS
+# 12. VECTOR HELPERS
 # ============================================================
 
 def point_record(
@@ -2291,56 +2163,11 @@ def point_record(
         y,
     )
 
-    try:
-
-        indices = list(
-
-            gdf.sindex
-            .intersection(
-                point.bounds
-            )
-
+    hit = gdf[
+        gdf.intersects(
+            point
         )
-
-        candidate = (
-
-            gdf.iloc[
-                indices
-            ]
-
-            if indices
-
-            else
-
-            gdf.iloc[
-                0:0
-            ]
-
-        )
-
-    except Exception:
-
-        candidate = gdf
-
-    if candidate.empty:
-
-        return None
-
-    try:
-
-        hit = candidate[
-            candidate.geometry.covers(
-                point
-            )
-        ]
-
-    except Exception:
-
-        hit = candidate[
-            candidate.intersects(
-                point
-            )
-        ]
+    ]
 
     if hit.empty:
 
@@ -2351,7 +2178,7 @@ def point_record(
     ]
 
 
-def nearest_distance_to_layer(
+def nearest_distance(
     gdf,
     x,
     y,
@@ -2422,19 +2249,22 @@ def nearest_record(
             None,
         )
 
-    index = (
+    idx = (
         distances.idxmin()
     )
 
     return (
+
         gdf.loc[
-            index
+            idx
         ],
+
         float(
             distances.loc[
-                index
+                idx
             ]
         ),
+
     )
 
 
@@ -2447,10 +2277,10 @@ def extract_record_fields(
 
         return {
 
-            key:
+            name:
                 "Unknown"
 
-            for key
+            for name
             in mapping_dict
 
         }
@@ -2461,20 +2291,19 @@ def extract_record_fields(
         record.index
     )
 
-    for output_name, candidates in (
+    for name, candidates in (
         mapping_dict.items()
     ):
 
-        column = first_matching_column(
-
-            columns,
-
-            candidates,
-
+        column = (
+            first_matching_column(
+                columns,
+                candidates,
+            )
         )
 
         output[
-            output_name
+            name
         ] = (
 
             safe_text(
@@ -2495,7 +2324,7 @@ def extract_record_fields(
 
 
 # ============================================================
-# 12. LULC
+# 13. LULC
 # ============================================================
 
 def canonical_lulc_name(
@@ -2513,6 +2342,9 @@ def canonical_lulc_name(
     mapping_dict = {
 
         "cropland":
+            "Crop land",
+
+        "crop":
             "Crop land",
 
         "agriculture":
@@ -2563,6 +2395,9 @@ def canonical_lulc_name(
         "waterbody":
             "Waterbody",
 
+        "water":
+            "Waterbody",
+
         "riverstream":
             "River/Stream",
 
@@ -2574,45 +2409,9 @@ def canonical_lulc_name(
     )
 
 
-def mapped_lulc_summary(
+def get_field_lulc(
     field_geojson
 ):
-
-    empty_result = {
-
-        "composition":
-            [],
-
-        "dominant":
-            "Unknown",
-
-        "confidence":
-            0.0,
-
-        "coverage":
-            0.0,
-
-        "classification":
-            "Unavailable",
-
-    }
-
-    if (
-        lulc_2022_utm
-        is None
-        or
-        lulc_2022_utm.empty
-    ):
-
-        return empty_result
-
-    if (
-        "LULC_2022"
-        not in
-        lulc_2022_utm.columns
-    ):
-
-        return empty_result
 
     field_geom = (
         to_utm_geometry(
@@ -2620,176 +2419,175 @@ def mapped_lulc_summary(
         )
     )
 
-    if not field_geom.is_valid:
-
-        field_geom = (
-            field_geom
-            .buffer(0)
-        )
-
-    field_area = (
+    field_area = float(
         field_geom.area
     )
 
     if field_area <= 0:
 
-        return empty_result
+        return {
 
-    core_buffer = min(
+            "dominant":
+                "Unknown",
 
-        5.0,
+            "confidence":
+                0,
 
-        max(
-            1.0,
-            0.02
-            *
-            math.sqrt(
-                field_area
-            ),
-        ),
+            "coverage":
+                0,
+
+            "composition":
+                [],
+
+        }
+
+    bounds = (
+        field_geom.bounds
     )
 
-    field_core = (
-        field_geom
-        .buffer(
-            -core_buffer
+    lulc = (
+        read_bbox_vector(
+
+            str(
+                LULC_2022_GPKG
+            ),
+
+            tuple(
+                bounds
+            ),
+
         )
     )
 
     if (
-        field_core.is_empty
+        lulc is None
         or
-        field_core.area
-        <
-        0.35
-        *
-        field_area
+        lulc.empty
+        or
+        "LULC_2022"
+        not in lulc.columns
     ):
 
-        field_core = (
-            field_geom
-        )
+        return {
 
-    try:
+            "dominant":
+                "Unknown",
 
-        ids = list(
+            "confidence":
+                0,
 
-            lulc_2022_utm
-            .sindex
-            .intersection(
-                field_geom.bounds
-            )
+            "coverage":
+                0,
 
-        )
+            "composition":
+                [],
 
-        candidate = (
+        }
 
-            lulc_2022_utm
-            .iloc[
-                ids
-            ]
-            .copy()
-
-            if ids
-
-            else
-
-            lulc_2022_utm
-            .iloc[
-                0:0
-            ]
-            .copy()
-
-        )
-
-    except Exception:
-
-        candidate = (
-            lulc_2022_utm
-            .copy()
-        )
-
-    candidate = candidate[
-        candidate.intersects(
+    lulc = lulc[
+        lulc.intersects(
             field_geom
         )
     ].copy()
 
-    if candidate.empty:
+    if lulc.empty:
 
-        return empty_result
+        return {
 
-    candidate[
+            "dominant":
+                "Unknown",
+
+            "confidence":
+                0,
+
+            "coverage":
+                0,
+
+            "composition":
+                [],
+
+        }
+
+    lulc[
         "_class"
     ] = (
 
-        candidate[
+        lulc[
             "LULC_2022"
         ]
+
         .apply(
             canonical_lulc_name
         )
 
     )
 
-    candidate[
-        "_full_area"
+    lulc[
+        "_area"
     ] = (
 
-        candidate.geometry
+        lulc.geometry
+
         .intersection(
             field_geom
         )
-        .area
 
-    )
-
-    candidate[
-        "_core_area"
-    ] = (
-
-        candidate.geometry
-        .intersection(
-            field_core
-        )
         .area
 
     )
 
     grouped = (
 
-        candidate
+        lulc
+
         .groupby(
-            "_class",
-            dropna=False,
+            "_class"
         )[
-            "_full_area"
+            "_area"
         ]
+
         .sum()
+
         .reset_index()
+
+        .sort_values(
+            "_area",
+            ascending=False,
+        )
 
     )
 
     grouped = grouped[
         grouped[
-            "_full_area"
+            "_area"
         ]
         >
         0.5
-    ].copy()
+    ]
 
-    grouped = (
-        grouped
-        .sort_values(
-            "_full_area",
-            ascending=False,
-        )
-    )
+    if grouped.empty:
+
+        return {
+
+            "dominant":
+                "Unknown",
+
+            "confidence":
+                0,
+
+            "coverage":
+                0,
+
+            "composition":
+                [],
+
+        }
 
     mapped_area = float(
         grouped[
-            "_full_area"
-        ].sum()
+            "_area"
+        ]
+        .sum()
     )
 
     coverage = min(
@@ -2801,6 +2599,30 @@ def mapped_lulc_summary(
         field_area
         *
         100,
+
+    )
+
+    dominant = (
+        grouped
+        .iloc[0][
+            "_class"
+        ]
+    )
+
+    confidence = (
+
+        grouped
+        .iloc[0][
+            "_area"
+        ]
+        /
+        mapped_area
+        *
+        100
+
+        if mapped_area > 0
+
+        else 0
 
     )
 
@@ -2821,7 +2643,7 @@ def mapped_lulc_summary(
                 "Area (ha)":
                     round(
                         row[
-                            "_full_area"
+                            "_area"
                         ]
                         /
                         10000,
@@ -2831,7 +2653,7 @@ def mapped_lulc_summary(
                 "Percent of field":
                     round(
                         row[
-                            "_full_area"
+                            "_area"
                         ]
                         /
                         field_area
@@ -2843,86 +2665,7 @@ def mapped_lulc_summary(
             }
         )
 
-    core_grouped = (
-
-        candidate
-        .groupby(
-            "_class"
-        )[
-            "_core_area"
-        ]
-        .sum()
-        .reset_index()
-        .sort_values(
-            "_core_area",
-            ascending=False,
-        )
-
-    )
-
-    if core_grouped.empty:
-
-        dominant = (
-            "Unknown"
-        )
-
-        confidence = 0.0
-
-    else:
-
-        dominant = (
-            core_grouped
-            .iloc[0][
-                "_class"
-            ]
-        )
-
-        core_total = (
-            core_grouped[
-                "_core_area"
-            ]
-            .sum()
-        )
-
-        confidence = (
-
-            core_grouped
-            .iloc[0][
-                "_core_area"
-            ]
-            /
-            core_total
-            *
-            100
-
-            if core_total > 0
-
-            else 0
-
-        )
-
-    if coverage < 70:
-
-        classification = (
-            "Incomplete GIS coverage"
-        )
-
-    elif confidence >= 70:
-
-        classification = (
-            f"2022 GIS reference: {dominant}"
-        )
-
-    else:
-
-        classification = (
-            f"Mixed GIS reference: {dominant}"
-        )
-
     return {
-
-        "composition":
-            composition,
 
         "dominant":
             dominant,
@@ -2937,18 +2680,161 @@ def mapped_lulc_summary(
                 coverage
             ),
 
-        "classification":
-            classification,
+        "composition":
+            composition,
 
     }
 
 
 # ============================================================
-# 13. SITE SELECTION
+# OPTIONAL 2025 PROJECTED LULC
+# ============================================================
+
+def get_projected_2025(
+    field_geojson
+):
+
+    if not PROJECTED_LULC_2025_SHP.exists():
+
+        return None
+
+    field_geom = (
+        to_utm_geometry(
+            field_geojson
+        )
+    )
+
+    layer = (
+        read_bbox_vector(
+
+            str(
+                PROJECTED_LULC_2025_SHP
+            ),
+
+            tuple(
+                field_geom.bounds
+            ),
+
+        )
+    )
+
+    if (
+        layer is None
+        or
+        layer.empty
+    ):
+
+        return None
+
+    class_field = (
+        first_matching_column(
+
+            layer.columns,
+
+            [
+                "Class_name",
+                "class_name",
+                "Class",
+                "LULC",
+            ],
+
+        )
+    )
+
+    if class_field is None:
+
+        return None
+
+    layer = layer[
+        layer.intersects(
+            field_geom
+        )
+    ].copy()
+
+    if layer.empty:
+
+        return None
+
+    layer[
+        "_class"
+    ] = (
+
+        layer[
+            class_field
+        ]
+
+        .apply(
+            canonical_lulc_name
+        )
+
+    )
+
+    layer[
+        "_area"
+    ] = (
+
+        layer.geometry
+
+        .intersection(
+            field_geom
+        )
+
+        .area
+
+    )
+
+    grouped = (
+
+        layer
+
+        .groupby(
+            "_class"
+        )[
+            "_area"
+        ]
+
+        .sum()
+
+        .sort_values(
+            ascending=False
+        )
+
+    )
+
+    if grouped.empty:
+
+        return None
+
+    return {
+
+        "dominant":
+            grouped.index[
+                0
+            ],
+
+        "share":
+            (
+                grouped.iloc[
+                    0
+                ]
+                /
+                grouped.sum()
+                *
+                100
+            ),
+
+    }
+
+
+# ============================================================
+# 14. SITE SELECTION
 # ============================================================
 
 def find_pond_site(
     field_geojson,
+    streams_local,
+    geomorph_local,
+    shear_local,
     boundary_clearance=10,
 ):
 
@@ -2961,56 +2847,64 @@ def find_pond_site(
         )
     )
 
-    shape_ref = (
+    reference_shape = (
         elevation.shape
     )
 
-    slope = raster_to_reference(
+    slope = (
+        raster_to_reference(
 
-        SLOPE_RASTER,
+            SLOPE_RASTER,
 
-        shape_ref,
+            reference_shape,
 
-        transform,
+            transform,
 
-        raster_crs,
+            raster_crs,
 
+        )
     )
 
-    twi = raster_to_reference(
+    twi = (
+        raster_to_reference(
 
-        TWI_RASTER,
+            TWI_RASTER,
 
-        shape_ref,
+            reference_shape,
 
-        transform,
+            transform,
 
-        raster_crs,
+            raster_crs,
 
+        )
     )
 
-    drainage = raster_to_reference(
+    drainage = (
+        raster_to_reference(
 
-        DRAINAGE_DENSITY_RASTER,
+            DRAINAGE_DENSITY_RASTER,
 
-        shape_ref,
+            reference_shape,
 
-        transform,
+            transform,
 
-        raster_crs,
+            raster_crs,
 
+        )
     )
 
-    flow = raster_to_reference(
+    flow = (
+        raster_to_reference(
 
-        FLOW_ACCUMULATION_RASTER,
+            FLOW_ACCUMULATION_RASTER,
 
-        shape_ref,
+            reference_shape,
 
-        transform,
+            transform,
 
-        raster_crs,
+            raster_crs,
 
+        )
     )
 
     valid = (
@@ -3043,17 +2937,13 @@ def find_pond_site(
 
     )
 
-    if (
-        np.count_nonzero(
-            valid
-        )
-        ==
-        0
-    ):
+    if np.count_nonzero(
+        valid
+    ) == 0:
 
         return None
 
-    lowest_array = np.where(
+    lowest_grid = np.where(
 
         valid,
 
@@ -3067,7 +2957,7 @@ def find_pond_site(
         np.unravel_index(
 
             np.argmin(
-                lowest_array
+                lowest_grid
             ),
 
             elevation.shape,
@@ -3075,37 +2965,48 @@ def find_pond_site(
         )
     )
 
-    lowest_x, \
-    lowest_y = xy(
+    lowest_x, lowest_y = xy(
 
         transform,
 
-        lowest_idx[0],
+        lowest_idx[
+            0
+        ],
 
-        lowest_idx[1],
+        lowest_idx[
+            1
+        ],
 
         offset="center",
 
     )
 
-    elevation_norm = normalize_array(
-        elevation,
-        valid,
+    elev_norm = (
+        normalize_array(
+            elevation,
+            valid,
+        )
     )
 
-    slope_norm = normalize_array(
-        slope,
-        valid,
+    slope_norm = (
+        normalize_array(
+            slope,
+            valid,
+        )
     )
 
-    twi_norm = normalize_array(
-        twi,
-        valid,
+    twi_norm = (
+        normalize_array(
+            twi,
+            valid,
+        )
     )
 
-    drainage_norm = normalize_array(
-        drainage,
-        valid,
+    drainage_norm = (
+        normalize_array(
+            drainage,
+            valid,
+        )
     )
 
     score = (
@@ -3115,7 +3016,7 @@ def find_pond_site(
         (
             1
             -
-            elevation_norm
+            elev_norm
         )
 
         +
@@ -3158,20 +3059,24 @@ def find_pond_site(
         flow_valid
     ):
 
-        flow_norm = normalize_array(
+        flow_norm = (
+            normalize_array(
 
-            np.log1p(
-                np.maximum(
-                    flow,
-                    0,
-                )
-            ),
+                np.log1p(
+                    np.maximum(
+                        flow,
+                        0,
+                    )
+                ),
 
-            flow_valid,
+                flow_valid,
 
+            )
         )
 
-        score += (
+        score = (
+            score
+            +
             0.05
             *
             flow_norm
@@ -3226,7 +3131,6 @@ def find_pond_site(
     )
 
     field_geom = (
-
         geometry_gdf(
             field_geojson
         )
@@ -3235,86 +3139,23 @@ def find_pond_site(
         )
         .geometry
         .iloc[0]
-
     )
 
     stream_union = None
 
     if (
-        streams_utm
+        streams_local
         is not None
         and
-        not streams_utm.empty
+        not streams_local.empty
     ):
 
-        streams_local = (
-            streams_utm
-            .to_crs(
-                raster_crs
+        stream_union = (
+            unary_union(
+                streams_local.geometry
+                .tolist()
             )
         )
-
-        search_area = (
-            field_geom
-            .buffer(
-                1000
-            )
-        )
-
-        try:
-
-            ids = list(
-
-                streams_local
-                .sindex
-                .intersection(
-                    search_area.bounds
-                )
-
-            )
-
-            local_streams = (
-
-                streams_local
-                .iloc[
-                    ids
-                ]
-
-                if ids
-
-                else
-
-                streams_local
-                .iloc[
-                    0:0
-                ]
-
-            )
-
-        except Exception:
-
-            local_streams = (
-                streams_local
-            )
-
-        local_streams = (
-            local_streams[
-                local_streams
-                .intersects(
-                    search_area
-                )
-            ]
-        )
-
-        if not local_streams.empty:
-
-            stream_union = (
-                unary_union(
-                    local_streams
-                    .geometry
-                    .tolist()
-                )
-            )
 
     order = (
         np.argsort(
@@ -3324,14 +3165,19 @@ def find_pond_site(
 
     best = None
 
-    for flat_index in (
-        order[:2000]
+    for flat_idx in (
+        order[
+            :1500
+        ]
     ):
 
         r, c = (
             np.unravel_index(
-                flat_index,
+
+                flat_idx,
+
                 score.shape,
+
             )
         )
 
@@ -3352,7 +3198,8 @@ def find_pond_site(
 
             c,
 
-            offset="center",
+            offset=
+                "center",
 
         )
 
@@ -3361,7 +3208,7 @@ def find_pond_site(
             py,
         )
 
-        boundary_distance = (
+        boundary_distance = float(
 
             point.distance(
                 field_geom.boundary
@@ -3381,7 +3228,7 @@ def find_pond_site(
 
         if stream_union is not None:
 
-            stream_distance = (
+            stream_distance = float(
 
                 point.distance(
                     stream_union
@@ -3389,27 +3236,27 @@ def find_pond_site(
 
             )
 
-            if stream_distance < 10:
+            if (
+                stream_distance
+                <
+                10
+            ):
 
                 continue
-
-        shear_distance = (
-            nearest_distance_to_layer(
-
-                shear_gdf,
-
-                px,
-
-                py,
-
-            )
-        )
 
         adjusted_score = float(
             score[
                 r,
                 c,
             ]
+        )
+
+        shear_distance = (
+            nearest_distance(
+                shear_local,
+                px,
+                py,
+            )
         )
 
         if shear_distance is not None:
@@ -3434,13 +3281,9 @@ def find_pond_site(
 
         geom_record = (
             point_record(
-
-                geomorph_gdf,
-
+                geomorph_local,
                 px,
-
                 py,
-
             )
         )
 
@@ -3450,14 +3293,15 @@ def find_pond_site(
                 geom_record,
 
                 {
+
                     "landform":
                         [
                             "legend_sho",
                             "description",
                             "descriptio",
                             "geomorphology",
-                            "landform",
                         ]
+
                 },
 
             )
@@ -3527,19 +3371,26 @@ def find_pond_site(
                 ),
 
             "flow_accumulation":
-                float(
-                    flow[
-                        r,
-                        c,
-                    ]
-                )
-                if np.isfinite(
-                    flow[
-                        r,
-                        c,
-                    ]
-                )
-                else np.nan,
+                (
+                    float(
+                        flow[
+                            r,
+                            c,
+                        ]
+                    )
+
+                    if
+                    np.isfinite(
+                        flow[
+                            r,
+                            c,
+                        ]
+                    )
+
+                    else
+
+                    np.nan
+                ),
 
             "site_score":
                 float(
@@ -3553,21 +3404,10 @@ def find_pond_site(
                 adjusted_score,
 
             "boundary_distance":
-                float(
-                    boundary_distance
-                ),
+                boundary_distance,
 
             "stream_distance":
-                (
-                    float(
-                        stream_distance
-                    )
-                    if
-                    stream_distance
-                    is not None
-                    else
-                    None
-                ),
+                stream_distance,
 
         }
 
@@ -3592,26 +3432,32 @@ def find_pond_site(
     transformer = (
         Transformer
         .from_crs(
+
             raster_crs,
+
             "EPSG:4326",
+
             always_xy=True,
+
         )
     )
 
     lon, lat = (
         transformer
         .transform(
+
             best[
                 "x"
             ],
+
             best[
                 "y"
             ],
+
         )
     )
 
-    lowest_lon, \
-    lowest_lat = (
+    low_lon, low_lat = (
         transformer
         .transform(
             lowest_x,
@@ -3636,33 +3482,32 @@ def find_pond_site(
         "recommended":
             best,
 
-        "lowest":
-            {
+        "lowest": {
 
-                "longitude":
-                    float(
-                        lowest_lon
-                    ),
+            "longitude":
+                float(
+                    low_lon
+                ),
 
-                "latitude":
-                    float(
-                        lowest_lat
-                    ),
+            "latitude":
+                float(
+                    low_lat
+                ),
 
-                "elevation":
-                    float(
-                        elevation[
-                            lowest_idx
-                        ]
-                    ),
+            "elevation":
+                float(
+                    elevation[
+                        lowest_idx
+                    ]
+                ),
 
-            },
+        },
 
     }
 
 
 # ============================================================
-# 14. POND DESIGN
+# 15. POND DESIGN
 # ============================================================
 
 def calculate_pond_geometry(
@@ -3675,16 +3520,14 @@ def calculate_pond_geometry(
 
     side_slope,
 
-    length_breadth_ratio,
+    ratio,
 
 ):
 
     bottom_length = (
-
         bottom_breadth
         *
-        length_breadth_ratio
-
+        ratio
     )
 
     water_top_breadth = (
@@ -3811,7 +3654,7 @@ def calculate_pond_geometry(
 
     )
 
-    long_side_area = (
+    long_side = (
 
         (
             bottom_length
@@ -3826,7 +3669,7 @@ def calculate_pond_geometry(
 
     )
 
-    short_side_area = (
+    short_side = (
 
         (
             bottom_breadth
@@ -3849,13 +3692,13 @@ def calculate_pond_geometry(
 
         2
         *
-        long_side_area
+        long_side
 
         +
 
         2
         *
-        short_side_area
+        short_side
 
     )
 
@@ -3923,7 +3766,7 @@ def calculate_pond_geometry(
 
 def design_farm_pond(
 
-    available_water_m3,
+    available_water,
 
     field_area_ha_value,
 
@@ -3937,7 +3780,7 @@ def design_farm_pond(
 
     side_slope,
 
-    length_breadth_ratio,
+    ratio,
 
 ):
 
@@ -3949,9 +3792,9 @@ def design_farm_pond(
 
     )
 
-    requested_storage = (
+    required_storage = (
 
-        available_water_m3
+        available_water
         *
         storage_fraction
 
@@ -3970,44 +3813,46 @@ def design_farm_pond(
     high = 120
 
     for _ in range(
-        80
+        70
     ):
 
-        middle = (
+        mid = (
             low
             +
             high
         ) / 2
 
-        geom = calculate_pond_geometry(
+        geometry = (
+            calculate_pond_geometry(
 
-            middle,
+                mid,
 
-            water_depth,
+                water_depth,
 
-            freeboard,
+                freeboard,
 
-            side_slope,
+                side_slope,
 
-            length_breadth_ratio,
+                ratio,
 
+            )
         )
 
         if (
-            geom[
+            geometry[
                 "footprint"
             ]
             >
             maximum_footprint
         ):
 
-            high = middle
+            high = mid
 
         else:
 
-            low = middle
+            low = mid
 
-    maximum_geom = (
+    maximum_geometry = (
         calculate_pond_geometry(
 
             low,
@@ -4018,16 +3863,16 @@ def design_farm_pond(
 
             side_slope,
 
-            length_breadth_ratio,
+            ratio,
 
         )
     )
 
     target_storage = min(
 
-        requested_storage,
+        required_storage,
 
-        maximum_geom[
+        maximum_geometry[
             "volume"
         ],
 
@@ -4041,19 +3886,19 @@ def design_farm_pond(
     )
 
     for _ in range(
-        80
+        70
     ):
 
-        middle = (
+        mid = (
             lower
             +
             upper
         ) / 2
 
-        geom = (
+        geometry = (
             calculate_pond_geometry(
 
-                middle,
+                mid,
 
                 water_depth,
 
@@ -4061,24 +3906,24 @@ def design_farm_pond(
 
                 side_slope,
 
-                length_breadth_ratio,
+                ratio,
 
             )
         )
 
         if (
-            geom[
+            geometry[
                 "volume"
             ]
             >
             target_storage
         ):
 
-            upper = middle
+            upper = mid
 
         else:
 
-            lower = middle
+            lower = mid
 
     result = (
         calculate_pond_geometry(
@@ -4091,18 +3936,16 @@ def design_farm_pond(
 
             side_slope,
 
-            length_breadth_ratio,
+            ratio,
 
         )
     )
 
     result[
-        "requested_storage"
-    ] = requested_storage
-
-    result[
         "target_storage"
-    ] = target_storage
+    ] = float(
+        target_storage
+    )
 
     result[
         "occupied_percent"
@@ -4111,9 +3954,13 @@ def design_farm_pond(
         result[
             "footprint"
         ]
+
         /
+
         field_area_m2
+
         *
+
         100
 
     )
@@ -4122,16 +3969,19 @@ def design_farm_pond(
 
 
 # ============================================================
-# 15. GEOLOGICAL / SEEPAGE SCREENING
+# 16. SEEPAGE / TERRAIN
 # ============================================================
 
-def classify_soil_texture(
+def classify_soil(
     texture
 ):
 
-    text = safe_text(
-        texture
-    ).lower()
+    text = (
+        safe_text(
+            texture
+        )
+        .lower()
+    )
 
     if text == "unknown":
 
@@ -4151,23 +4001,6 @@ def classify_soil_texture(
         return (
             "Low to moderate seepage tendency",
             0,
-        )
-
-    if any(
-        term
-        in text
-
-        for term
-        in [
-            "fine",
-            "silt loam",
-            "silty clay",
-        ]
-    ):
-
-        return (
-            "Moderate seepage tendency",
-            1,
         )
 
     if (
@@ -4196,14 +4029,17 @@ def classify_soil_texture(
     )
 
 
-def terrain_constraint(
+def classify_terrain(
     landform,
     slope
 ):
 
-    text = safe_text(
-        landform
-    ).lower()
+    text = (
+        safe_text(
+            landform
+        )
+        .lower()
+    )
 
     if (
         "scarp"
@@ -4248,7 +4084,7 @@ def terrain_constraint(
     )
 
 
-def shear_zone_class(
+def classify_shear(
     distance
 ):
 
@@ -4302,40 +4138,38 @@ def build_screening(
 
 ):
 
-    soil_text, \
-    soil_score = (
-        classify_soil_texture(
+    soil_text, soil_score = (
+        classify_soil(
             soil_texture
         )
     )
 
-    terrain_text, \
-    terrain_score = (
-        terrain_constraint(
+    terrain_text, terrain_score = (
+        classify_terrain(
             landform,
             slope,
         )
     )
 
-    shear_text, \
-    shear_score = (
-        shear_zone_class(
+    shear_text, shear_score = (
+        classify_shear(
             shear_distance
         )
     )
 
-    lithology_score = 1
-
-    lith_text = (
+    lithology_text = (
         safe_text(
             lithology
         )
         .lower()
     )
 
+    lithology_score = 1
+
     if any(
+
         term
-        in lith_text
+        in lithology_text
 
         for term
         in [
@@ -4344,6 +4178,7 @@ def build_screening(
             "gravel",
             "alluv",
         ]
+
     ):
 
         lithology_score = 2
@@ -4370,7 +4205,7 @@ def build_screening(
 
             lineament_score = 1
 
-    seepage_score = (
+    total = (
 
         soil_score
 
@@ -4388,48 +4223,41 @@ def build_screening(
 
     )
 
-    if seepage_score >= 6:
+    if total >= 6:
 
-        seepage = (
-            "HIGH"
-        )
+        seepage = "HIGH"
 
-    elif seepage_score >= 3:
+    elif total >= 3:
 
-        seepage = (
-            "MODERATE"
-        )
+        seepage = "MODERATE"
 
     else:
 
-        seepage = (
-            "LOW"
-        )
+        seepage = "LOW"
 
     if seepage == "HIGH":
 
         lining = (
-            "High seepage-risk screening. "
-            "Field permeability testing and "
-            "engineered lining are likely required."
+            "High GIS-screened seepage concern. "
+            "Field permeability testing and engineered "
+            "lining are likely required."
         )
 
     elif seepage == "MODERATE":
 
         lining = (
-            "Moderate seepage-risk screening. "
-            "Assess field permeability and available "
-            "clay material. Compacted clay or "
-            "geomembrane lining may be required."
+            "Moderate GIS-screened seepage concern. "
+            "Check permeability and available clay. "
+            "Compacted clay or geomembrane lining "
+            "may be required."
         )
 
     else:
 
         lining = (
             "Lower GIS-screened seepage concern. "
-            "Field permeability verification is "
-            "still required before deciding that "
-            "lining is unnecessary."
+            "Field permeability verification is still "
+            "required before omitting lining."
         )
 
     return {
@@ -4453,7 +4281,7 @@ def build_screening(
 
 
 # ============================================================
-# 16. FARMER INFORMATION
+# 17. FARMER INFORMATION
 # ============================================================
 
 with st.expander(
@@ -4461,8 +4289,8 @@ with st.expander(
     expanded=False,
 ):
 
-    f1, f2 = (
-        st.columns(2)
+    f1, f2 = st.columns(
+        2
     )
 
     farmer_name = (
@@ -4479,11 +4307,11 @@ with st.expander(
 
 
 # ============================================================
-# 17. FIELD MAP
+# 18. MAP
 # ============================================================
 
 st.markdown(
-    "## 1️⃣ Interactive Farmer Field Mapping"
+    "## 1️⃣ Locate and Draw Farmer Field"
 )
 
 
@@ -4491,21 +4319,13 @@ st.markdown(
     """
 <div class="gp-workflow">
 
-<b>📍 Field Mapping Workflow</b><br><br>
+<b>📍 Quick Field Workflow</b><br>
 
-<b>1.</b> Locate the farmer field using GPS or
-satellite imagery.<br>
-
-<b>2.</b> Zoom to parcel level.<br>
-
-<b>3.</b> Select the polygon drawing tool.<br>
-
-<b>4.</b> Trace the actual field boundary.<br>
-
-<b>5.</b> Edit the polygon where necessary.<br>
-
-<b>6.</b> GeoPond-DSS automatically calculates
-area and retrieves GIS information.
+1. Use GPS or satellite imagery to locate the field.<br>
+2. Zoom to the farm parcel.<br>
+3. Select the polygon tool and trace the field.<br>
+4. Close the polygon.<br>
+5. GeoPond-DSS will calculate the field area and retrieve only the required GIS information.
 
 </div>
 """,
@@ -4533,7 +4353,6 @@ field_map = folium.Map(
 )
 
 
-# Satellite
 folium.TileLayer(
 
     tiles=
@@ -4551,9 +4370,6 @@ folium.TileLayer(
     overlay=
         False,
 
-    control=
-        True,
-
     show=
         True,
 
@@ -4565,7 +4381,6 @@ folium.TileLayer(
 )
 
 
-# OSM
 folium.TileLayer(
 
     "OpenStreetMap",
@@ -4581,7 +4396,6 @@ folium.TileLayer(
 )
 
 
-# District boundary
 if boundary_wgs is not None:
 
     folium.GeoJson(
@@ -4590,7 +4404,7 @@ if boundary_wgs is not None:
         .__geo_interface__,
 
         name=
-            "Ri Bhoi District",
+            "Ri Bhoi Boundary",
 
         style_function=
             lambda feature: {
@@ -4611,45 +4425,6 @@ if boundary_wgs is not None:
     )
 
 
-# Current field
-if (
-    st.session_state[
-        "field_geometry"
-    ]
-):
-
-    folium.GeoJson(
-
-        st.session_state[
-            "field_geometry"
-        ],
-
-        name=
-            "Farmer Field",
-
-        style_function=
-            lambda feature: {
-
-                "color":
-                    "#00E676",
-
-                "weight":
-                    5,
-
-                "fillColor":
-                    "#69F0AE",
-
-                "fillOpacity":
-                    0.25,
-
-            },
-
-    ).add_to(
-        field_map
-    )
-
-
-# GPS
 LocateControl(
 
     position=
@@ -4681,10 +4456,47 @@ LocateControl(
 )
 
 
-# Draw tool
+if (
+    st.session_state[
+        "field_geometry"
+    ]
+):
+
+    folium.GeoJson(
+
+        st.session_state[
+            "field_geometry"
+        ],
+
+        name=
+            "Farmer Field",
+
+        style_function=
+            lambda feature: {
+
+                "color":
+                    "#00E676",
+
+                "weight":
+                    5,
+
+                "fillColor":
+                    "#69F0AE",
+
+                "fillOpacity":
+                    .25,
+
+            },
+
+    ).add_to(
+        field_map
+    )
+
+
 Draw(
 
-    export=False,
+    export=
+        False,
 
     position=
         "topleft",
@@ -4729,7 +4541,7 @@ Draw(
                     "#69F0AE",
 
                 "fillOpacity":
-                    0.25,
+                    .25,
 
             },
 
@@ -4752,7 +4564,6 @@ Draw(
 )
 
 
-# Measure
 MeasureControl(
 
     position=
@@ -4760,9 +4571,6 @@ MeasureControl(
 
     primary_length_unit=
         "meters",
-
-    secondary_length_unit=
-        "kilometers",
 
     primary_area_unit=
         "sqmeters",
@@ -4772,31 +4580,13 @@ MeasureControl(
 )
 
 
-# Mini map
-MiniMap(
-
-    toggle_display=
-        True,
-
-    position=
-        "bottomright",
-
-).add_to(
-    field_map
-)
-
-
-# Coordinates
 MousePosition(
 
     position=
         "bottomleft",
 
     prefix=
-        "Coordinates:",
-
-    separator=
-        " | ",
+        "Lat/Lon:",
 
     num_digits=
         5,
@@ -4807,39 +4597,17 @@ MousePosition(
 
 
 Fullscreen(
-    position="topleft"
+    position=
+        "topleft"
 ).add_to(
     field_map
 )
 
 
 folium.LayerControl(
-
-    position=
-        "topright",
-
-    collapsed=
-        True,
-
+    collapsed=True
 ).add_to(
     field_map
-)
-
-
-st.markdown(
-    """
-<div class="gp-panel">
-
-<div class="gp-panel-title">
-🗺 Interactive Web-GIS Workspace
-</div>
-
-GPS • Satellite Imagery • Field Drawing •
-Measurement • Coordinates • Layer Control
-
-</div>
-""",
-    unsafe_allow_html=True,
 )
 
 
@@ -4848,7 +4616,7 @@ map_output = st_folium(
     field_map,
 
     height=
-        650,
+        550,
 
     use_container_width=
         True,
@@ -4857,8 +4625,7 @@ map_output = st_folium(
         "geopond_field_map",
 
     returned_objects=[
-        "all_drawings",
-        "last_active_drawing",
+        "all_drawings"
     ],
 
 )
@@ -4900,7 +4667,7 @@ field = (
 
 
 # ============================================================
-# 18. FIELD LAND USE
+# 19. LAND USE
 # ============================================================
 
 LAND_USE_OPTIONS = [
@@ -4936,31 +4703,36 @@ if field:
         )
     )
 
-    lulc = (
-        mapped_lulc_summary(
-            field
+    with st.spinner(
+        "Reading LULC only for the selected field..."
+    ):
+
+        lulc_result = (
+            get_field_lulc(
+                field
+            )
         )
-    )
 
     mapped_lulc = (
-        lulc[
+        lulc_result[
             "dominant"
         ]
     )
 
+
     st.success(
-        f"✅ Farmer field captured: "
+        f"✅ Field captured: "
         f"{field_area:.3f} ha"
     )
 
 
     st.markdown(
-        "## 🌾 Field Land-Use Assessment"
+        "## 🌾 Land-Use Assessment"
     )
 
 
-    c1, c2, c3 = (
-        st.columns(3)
+    c1, c2, c3 = st.columns(
+        3
     )
 
     c1.metric(
@@ -4975,7 +4747,7 @@ if field:
 
     c3.metric(
         "GIS Coverage",
-        f"{lulc['coverage']:.1f}%",
+        f"{lulc_result['coverage']:.1f}%",
     )
 
 
@@ -5024,11 +4796,6 @@ if field:
             index=
                 default_index,
 
-            help=(
-                "Current field observation is authoritative "
-                "for farm-level planning."
-            ),
-
         )
     )
 
@@ -5051,8 +4818,7 @@ ACTIVE PLANNING LAND USE
 </div>
 
 <div class="decision-note">
-Used for GeoPond-DSS pond planning
-and farmer assessment.
+Field observation is authoritative for farm-level planning.
 </div>
 
 </div>
@@ -5069,10 +4835,15 @@ and farmer assessment.
 
 
     status = (
-        "HIGH CONFIDENCE"
+
+        "AGREEMENT"
+
         if agreement
+
         else
-        "FIELD VERIFIED / GIS CONFLICT"
+
+        "GIS / FIELD DIFFERENCE"
+
     )
 
 
@@ -5087,18 +4858,18 @@ and farmer assessment.
 <div class="gis-grid">
 
 <div>
-<span>Mapped class</span>
+<span>Mapped 2022</span>
 <b>{mapped_lulc}</b>
 </div>
 
 <div>
-<span>Class share</span>
-<b>{lulc['confidence']:.1f}%</b>
+<span>Mapped share</span>
+<b>{lulc_result['confidence']:.1f}%</b>
 </div>
 
 <div>
 <span>Coverage</span>
-<b>{lulc['coverage']:.1f}%</b>
+<b>{lulc_result['coverage']:.1f}%</b>
 </div>
 
 <div>
@@ -5115,17 +4886,18 @@ and farmer assessment.
 
 
     with st.expander(
-        "View LULC composition inside farmer field"
+        "View mapped LULC composition",
+        expanded=False,
     ):
 
-        if lulc[
+        if lulc_result[
             "composition"
         ]:
 
             st.dataframe(
 
                 pd.DataFrame(
-                    lulc[
+                    lulc_result[
                         "composition"
                     ]
                 ),
@@ -5139,18 +4911,49 @@ and farmer assessment.
             )
 
 
+    load_2025 = (
+        st.checkbox(
+            "Load optional 2025 projected LULC comparison",
+            value=False,
+        )
+    )
+
+
+    if load_2025:
+
+        with st.spinner(
+            "Reading projected 2025 LULC..."
+        ):
+
+            projected = (
+                get_projected_2025(
+                    field
+                )
+            )
+
+        if projected:
+
+            st.info(
+                f"Projected 2025 class: "
+                f"**{projected['dominant']}** "
+                f"({projected['share']:.1f}% of mapped overlap)"
+            )
+
+        else:
+
+            st.warning(
+                "2025 projected LULC is unavailable for this field."
+            )
+
+
 # ============================================================
-# 19. PLANNING PARAMETERS
+# 20. PLANNING SETTINGS
 # ============================================================
 
 if field:
 
-    st.markdown(
-        "## ⚙️ Pond Planning Parameters"
-    )
-
     with st.expander(
-        "Adjust preliminary planning assumptions",
+        "⚙️ Preliminary Pond Planning Settings",
         expanded=False,
     ):
 
@@ -5170,6 +4973,7 @@ if field:
             )
         )
 
+
         maximum_land_percent = (
             st.slider(
 
@@ -5185,6 +4989,7 @@ if field:
 
             )
         )
+
 
         water_depth = (
             st.slider(
@@ -5202,6 +5007,7 @@ if field:
             )
         )
 
+
         freeboard = (
             st.slider(
 
@@ -5217,6 +5023,7 @@ if field:
 
             )
         )
+
 
         side_slope = (
             st.slider(
@@ -5234,7 +5041,8 @@ if field:
             )
         )
 
-        length_breadth_ratio = (
+
+        ratio = (
             st.slider(
 
                 "Bottom length : breadth ratio",
@@ -5252,7 +5060,7 @@ if field:
 
 
 # ============================================================
-# 20. RUN GEOPOND-DSS
+# 21. RUN DSS
 # ============================================================
 
 if field:
@@ -5274,402 +5082,747 @@ if field:
 
     ):
 
+
         with st.spinner(
-            "Running hydrology, terrain, pond-site and geological screening..."
+            "Analysing runoff and terrain..."
         ):
 
-            field_area = (
+            area_ha = (
                 field_area_ha(
                     field
                 )
             )
 
-            rainfall = raster_mean(
-                RAINFALL_RASTER,
-                field,
+
+            rainfall = (
+                raster_mean(
+                    RAINFALL_RASTER,
+                    field,
+                )
             )
 
-            mean_runoff = raster_mean(
-                MEAN_RUNOFF_RASTER,
-                field,
+
+            mean_runoff = (
+                raster_mean(
+                    MEAN_RUNOFF_RASTER,
+                    field,
+                )
             )
 
-            dependable_runoff = raster_mean(
-                DEPENDABLE_RUNOFF_RASTER,
-                field,
+
+            dependable_runoff = (
+                raster_mean(
+                    DEPENDABLE_RUNOFF_RASTER,
+                    field,
+                )
             )
 
-            cn = raster_mean(
-                CN_RASTER,
-                field,
+
+            cn = (
+                raster_mean(
+                    CN_RASTER,
+                    field,
+                )
             )
 
-            runoff_coefficient = raster_mean(
-                RUNOFF_COEFFICIENT_RASTER,
-                field,
+
+            runoff_coefficient = (
+                raster_mean(
+                    RUNOFF_COEFFICIENT_RASTER,
+                    field,
+                )
             )
+
 
             mean_volume = (
 
                 mean_runoff
                 *
-                field_area
+                area_ha
                 *
                 10
 
             )
+
 
             dependable_volume = (
 
                 dependable_runoff
                 *
-                field_area
+                area_ha
                 *
                 10
 
             )
 
-            pond = design_farm_pond(
 
-                dependable_volume,
+            pond = (
+                design_farm_pond(
 
-                field_area,
-
-                storage_fraction_percent
-                /
-                100,
-
-                maximum_land_percent
-                /
-                100,
-
-                water_depth,
-
-                freeboard,
-
-                side_slope,
-
-                length_breadth_ratio,
-
-            )
-
-            half_diagonal = (
-
-                0.5
-                *
-                math.sqrt(
-
-                    pond[
-                        "top_length"
-                    ] ** 2
-
-                    +
-
-                    pond[
-                        "top_breadth"
-                    ] ** 2
-
-                )
-
-            )
-
-            site_result = (
-                find_pond_site(
-
-                    field,
-
-                    boundary_clearance=
-                        max(
-                            10,
-                            half_diagonal
-                            +
-                            2,
-                        ),
-
-                )
-            )
-
-            if site_result is None:
-
-                st.error(
-                    "No suitable GIS-screened candidate was identified."
-                )
-
-                st.stop()
-
-            site = (
-                site_result[
-                    "recommended"
-                ]
-            )
-
-            lowest = (
-                site_result[
-                    "lowest"
-                ]
-            )
-
-
-            # Soil
-            soil_record = (
-                point_record(
-
-                    soil_gdf,
-
-                    site[
-                        "x"
-                    ],
-
-                    site[
-                        "y"
-                    ],
-
-                )
-            )
-
-            soil_info = (
-                extract_record_fields(
-
-                    soil_record,
-
-                    {
-                        "texture":
-                            [
-                                "Texture",
-                                "soil_texture",
-                            ]
-                    },
-
-                )
-            )
-
-
-            # Geomorphology
-            geom_record = (
-                point_record(
-
-                    geomorph_gdf,
-
-                    site[
-                        "x"
-                    ],
-
-                    site[
-                        "y"
-                    ],
-
-                )
-            )
-
-            geom_info = (
-                extract_record_fields(
-
-                    geom_record,
-
-                    {
-                        "landform":
-                            [
-                                "legend_sho",
-                                "description",
-                                "descriptio",
-                                "geomorphology",
-                            ]
-                    },
-
-                )
-            )
-
-
-            # Lithology
-            lith_record = (
-                point_record(
-
-                    lithology_gdf,
-
-                    site[
-                        "x"
-                    ],
-
-                    site[
-                        "y"
-                    ],
-
-                )
-            )
-
-            lith_info = (
-                extract_record_fields(
-
-                    lith_record,
-
-                    {
-
-                        "group":
-                            [
-                                "group_name",
-                                "group",
-                            ],
-
-                        "formation":
-                            [
-                                "formation",
-                            ],
-
-                        "lithology":
-                            [
-                                "lithologic",
-                                "lithology",
-                            ],
-
-                        "age":
-                            [
-                                "age",
-                            ],
-
-                    },
-
-                )
-            )
-
-
-            shear_distance = (
-                nearest_distance_to_layer(
-
-                    shear_gdf,
-
-                    site[
-                        "x"
-                    ],
-
-                    site[
-                        "y"
-                    ],
-
-                )
-            )
-
-
-            lineament_density = (
-                sample_raster(
-
-                    LINEAMENT_DENSITY_RASTER,
-
-                    site[
-                        "x"
-                    ],
-
-                    site[
-                        "y"
-                    ],
-
-                )
-            )
-
-
-            screening = (
-                build_screening(
-
-                    soil_info[
-                        "texture"
-                    ],
-
-                    geom_info[
-                        "landform"
-                    ],
-
-                    lith_info[
-                        "lithology"
-                    ],
-
-                    shear_distance,
-
-                    lineament_density,
-
-                    site[
-                        "slope"
-                    ],
-
-                )
-            )
-
-
-            st.session_state[
-                "assessment"
-            ] = {
-
-                "farmer":
-                    farmer_name,
-
-                "village":
-                    village,
-
-                "field_area":
-                    field_area,
-
-                "current_lulc":
-                    st.session_state[
-                        "current_lulc"
-                    ],
-
-                "mapped_lulc":
-                    mapped_lulc,
-
-                "rainfall":
-                    rainfall,
-
-                "mean_runoff":
-                    mean_runoff,
-
-                "dependable_runoff":
-                    dependable_runoff,
-
-                "mean_volume":
-                    mean_volume,
-
-                "dependable_volume":
                     dependable_volume,
 
-                "cn":
-                    cn,
+                    area_ha,
 
-                "runoff_coefficient":
-                    runoff_coefficient,
+                    storage_fraction_percent
+                    /
+                    100,
 
-                "site":
-                    site,
+                    maximum_land_percent
+                    /
+                    100,
 
-                "lowest":
-                    lowest,
+                    water_depth,
 
-                "pond":
-                    pond,
+                    freeboard,
 
-                "soil_info":
-                    soil_info,
+                    side_slope,
 
-                "geom_info":
-                    geom_info,
+                    ratio,
 
-                "lith_info":
-                    lith_info,
+                )
+            )
 
-                "shear_distance":
-                    shear_distance,
 
-                "lineament_density":
-                    lineament_density,
+        field_geom = (
+            to_utm_geometry(
+                field
+            )
+        )
 
-                "screening":
-                    screening,
 
-            }
+        # Only local GIS data are read
+        field_search = (
+            field_geom
+            .buffer(
+                1000
+            )
+        )
+
+
+        with st.spinner(
+            "Reading only nearby GIS features..."
+        ):
+
+
+            streams_local = (
+
+                read_bbox_vector(
+
+                    str(
+                        STREAMS_GPKG
+                    ),
+
+                    tuple(
+                        field_search.bounds
+                    ),
+
+                )
+
+                if STREAMS_GPKG.exists()
+
+                else
+
+                None
+
+            )
+
+
+            geomorph_local = (
+                read_bbox_vector(
+
+                    str(
+                        GEOMORPHOLOGY_GPKG
+                    ),
+
+                    tuple(
+                        field_geom.bounds
+                    ),
+
+                )
+            )
+
+
+            shear_search = (
+                field_geom
+                .buffer(
+                    300
+                )
+            )
+
+
+            shear_local_for_site = (
+                read_bbox_vector(
+
+                    str(
+                        SHEAR_ZONE_GPKG
+                    ),
+
+                    tuple(
+                        shear_search.bounds
+                    ),
+
+                )
+            )
+
+
+        half_diagonal = (
+
+            0.5
+
+            *
+
+            math.sqrt(
+
+                pond[
+                    "top_length"
+                ] ** 2
+
+                +
+
+                pond[
+                    "top_breadth"
+                ] ** 2
+
+            )
+
+        )
+
+
+        site_result = (
+            find_pond_site(
+
+                field,
+
+                streams_local,
+
+                geomorph_local,
+
+                shear_local_for_site,
+
+                boundary_clearance=
+                    max(
+                        10,
+                        half_diagonal
+                        +
+                        2,
+                    ),
+
+            )
+        )
+
+
+        if site_result is None:
+
+            st.error(
+                "No suitable GIS candidate could be identified inside this field."
+            )
+
+            st.stop()
+
+
+        site = (
+            site_result[
+                "recommended"
+            ]
+        )
+
+
+        lowest = (
+            site_result[
+                "lowest"
+            ]
+        )
+
+
+        # ====================================================
+        # READ ONLY AROUND FINAL POND SITE
+        # ====================================================
+
+        candidate_search_100 = box(
+
+            site[
+                "x"
+            ]
+            -
+            100,
+
+            site[
+                "y"
+            ]
+            -
+            100,
+
+            site[
+                "x"
+            ]
+            +
+            100,
+
+            site[
+                "y"
+            ]
+            +
+            100,
+
+        )
+
+
+        with st.spinner(
+            "Retrieving local soil and geology..."
+        ):
+
+
+            soil_local = (
+                read_bbox_with_fallback(
+
+                    SOIL_GPKG,
+
+                    SOIL_SHP,
+
+                    candidate_search_100.bounds,
+
+                )
+            )
+
+
+            lithology_local = (
+                read_bbox_vector(
+
+                    str(
+                        LITHOLOGY_GPKG
+                    ),
+
+                    tuple(
+                        candidate_search_100.bounds
+                    ),
+
+                )
+            )
+
+
+            geomorph_site = (
+                read_bbox_vector(
+
+                    str(
+                        GEOMORPHOLOGY_GPKG
+                    ),
+
+                    tuple(
+                        candidate_search_100.bounds
+                    ),
+
+                )
+            )
+
+
+            # Actual nearest shear search
+            shear_search_large = box(
+
+                site[
+                    "x"
+                ]
+                -
+                15000,
+
+                site[
+                    "y"
+                ]
+                -
+                15000,
+
+                site[
+                    "x"
+                ]
+                +
+                15000,
+
+                site[
+                    "y"
+                ]
+                +
+                15000,
+
+            )
+
+
+            shear_nearby = (
+                read_bbox_vector(
+
+                    str(
+                        SHEAR_ZONE_GPKG
+                    ),
+
+                    tuple(
+                        shear_search_large.bounds
+                    ),
+
+                )
+            )
+
+
+            # C-horizon local search
+            c_search = box(
+
+                site[
+                    "x"
+                ]
+                -
+                15000,
+
+                site[
+                    "y"
+                ]
+                -
+                15000,
+
+                site[
+                    "x"
+                ]
+                +
+                15000,
+
+                site[
+                    "y"
+                ]
+                +
+                15000,
+
+            )
+
+
+            c_horizon_local = (
+                read_bbox_vector(
+
+                    str(
+                        SOIL_C_HORIZON_GPKG
+                    ),
+
+                    tuple(
+                        c_search.bounds
+                    ),
+
+                )
+            )
+
+
+        soil_record = (
+            point_record(
+
+                soil_local,
+
+                site[
+                    "x"
+                ],
+
+                site[
+                    "y"
+                ],
+
+            )
+        )
+
+
+        geom_record = (
+            point_record(
+
+                geomorph_site,
+
+                site[
+                    "x"
+                ],
+
+                site[
+                    "y"
+                ],
+
+            )
+        )
+
+
+        lith_record = (
+            point_record(
+
+                lithology_local,
+
+                site[
+                    "x"
+                ],
+
+                site[
+                    "y"
+                ],
+
+            )
+        )
+
+
+        soil_info = (
+            extract_record_fields(
+
+                soil_record,
+
+                {
+
+                    "texture":
+                        [
+                            "Texture",
+                            "soil_texture",
+                            "texture_class",
+                        ],
+
+                },
+
+            )
+        )
+
+
+        geom_info = (
+            extract_record_fields(
+
+                geom_record,
+
+                {
+
+                    "landform":
+                        [
+                            "legend_sho",
+                            "description",
+                            "descriptio",
+                            "geomorphology",
+                            "landform",
+                        ],
+
+                },
+
+            )
+        )
+
+
+        lith_info = (
+            extract_record_fields(
+
+                lith_record,
+
+                {
+
+                    "group":
+                        [
+                            "group_name",
+                            "group",
+                        ],
+
+                    "formation":
+                        [
+                            "formation",
+                        ],
+
+                    "lithology":
+                        [
+                            "lithologic",
+                            "lithology",
+                        ],
+
+                    "age":
+                        [
+                            "age",
+                        ],
+
+                },
+
+            )
+        )
+
+
+        shear_distance = (
+            nearest_distance(
+
+                shear_nearby,
+
+                site[
+                    "x"
+                ],
+
+                site[
+                    "y"
+                ],
+
+            )
+        )
+
+
+        c_record, c_distance = (
+            nearest_record(
+
+                c_horizon_local,
+
+                site[
+                    "x"
+                ],
+
+                site[
+                    "y"
+                ],
+
+            )
+        )
+
+
+        c_info = (
+            extract_record_fields(
+
+                c_record,
+
+                {
+
+                    "sample_id":
+                        [
+                            "sample_id",
+                            "sampleid",
+                            "id",
+                            "sample_no",
+                        ],
+
+                },
+
+            )
+        )
+
+
+        lineament_density = (
+            sample_raster(
+
+                LINEAMENT_DENSITY_RASTER,
+
+                site[
+                    "x"
+                ],
+
+                site[
+                    "y"
+                ],
+
+            )
+        )
+
+
+        screening = (
+            build_screening(
+
+                soil_info[
+                    "texture"
+                ],
+
+                geom_info[
+                    "landform"
+                ],
+
+                lith_info[
+                    "lithology"
+                ],
+
+                shear_distance,
+
+                lineament_density,
+
+                site[
+                    "slope"
+                ],
+
+            )
+        )
+
+
+        st.session_state[
+            "assessment"
+        ] = {
+
+            "farmer":
+                farmer_name,
+
+            "village":
+                village,
+
+            "field_area":
+                area_ha,
+
+            "current_lulc":
+                current_lulc,
+
+            "mapped_lulc":
+                mapped_lulc,
+
+            "lulc_confidence":
+                lulc_result[
+                    "confidence"
+                ],
+
+            "lulc_coverage":
+                lulc_result[
+                    "coverage"
+                ],
+
+            "rainfall":
+                rainfall,
+
+            "mean_runoff":
+                mean_runoff,
+
+            "dependable_runoff":
+                dependable_runoff,
+
+            "mean_volume":
+                mean_volume,
+
+            "dependable_volume":
+                dependable_volume,
+
+            "cn":
+                cn,
+
+            "runoff_coefficient":
+                runoff_coefficient,
+
+            "site":
+                site,
+
+            "lowest":
+                lowest,
+
+            "pond":
+                pond,
+
+            "soil_info":
+                soil_info,
+
+            "geom_info":
+                geom_info,
+
+            "lith_info":
+                lith_info,
+
+            "shear_distance":
+                shear_distance,
+
+            "lineament_density":
+                lineament_density,
+
+            "c_horizon_info":
+                c_info,
+
+            "c_horizon_distance":
+                c_distance,
+
+            "screening":
+                screening,
+
+        }
 
 
         st.rerun()
 
 
 # ============================================================
-# 21. RESULT DASHBOARD
+# 22. RESULTS
 # ============================================================
 
 assessment = (
@@ -5687,15 +5840,15 @@ if assessment:
         ]
     )
 
-    lowest = (
-        assessment[
-            "lowest"
-        ]
-    )
-
     pond = (
         assessment[
             "pond"
+        ]
+    )
+
+    lowest = (
+        assessment[
+            "lowest"
         ]
     )
 
@@ -5707,24 +5860,7 @@ if assessment:
 
 
     st.markdown(
-        "## ✅ GeoPond-DSS Assessment Dashboard"
-    )
-
-
-    terrain_status = (
-
-        "Favourable"
-
-        if screening[
-            "terrain_constraint"
-        ]
-        ==
-        "LOW"
-
-        else
-
-        "Review"
-
+        "## ✅ GeoPond-DSS Assessment"
     )
 
 
@@ -5733,23 +5869,23 @@ if assessment:
 <div class="gis-card">
 
 <div class="gis-card-title">
-📊 Decision Summary
+📊 Decision Dashboard
 </div>
 
 <div class="gis-grid">
 
 <div>
-<span>Planning land use</span>
+<span>Land use</span>
 <b>{assessment['current_lulc']}</b>
 </div>
 
 <div>
 <span>Terrain</span>
-<b>{terrain_status}</b>
+<b>{screening['terrain_constraint']}</b>
 </div>
 
 <div>
-<span>Seepage risk</span>
+<span>Seepage</span>
 <b>{screening['seepage_risk']}</b>
 </div>
 
@@ -5766,35 +5902,55 @@ if assessment:
     )
 
 
-    k1, k2, k3, k4 = (
-        st.columns(4)
+    m1, m2, m3, m4 = (
+        st.columns(
+            4
+        )
     )
 
-    k1.metric(
+
+    m1.metric(
+
         "Field Area",
+
         f"{assessment['field_area']:.3f} ha",
+
     )
 
-    k2.metric(
+
+    m2.metric(
+
         "Dependable Water",
-        f"{assessment['dependable_volume']:,.0f} m³/yr",
+
+        f"{assessment['dependable_volume']:,.0f} m³/year",
+
     )
 
-    k3.metric(
+
+    m3.metric(
+
         "Storage Target",
+
         f"{pond['target_storage']:,.0f} m³",
+
     )
 
-    k4.metric(
-        "Pond Footprint",
-        f"{pond['footprint']:,.0f} m²",
+
+    m4.metric(
+
+        "Seepage",
+
+        screening[
+            "seepage_risk"
+        ],
+
     )
 
 
     (
         tab_overview,
         tab_map,
-        tab_water,
+        tab_hydrology,
         tab_design,
         tab_geology,
         tab_technical,
@@ -5803,13 +5959,13 @@ if assessment:
 
             "📊 Overview",
 
-            "🗺 Candidate Map",
+            "🗺 Map",
 
             "💧 Hydrology",
 
             "📐 Pond Design",
 
-            "🪨 Geology & Seepage",
+            "🪨 Geology",
 
             "🔬 Technical",
 
@@ -5824,59 +5980,100 @@ if assessment:
     with tab_overview:
 
         st.success(
-            "The displayed location is the highest-ranked "
-            "GIS-screened candidate inside the farmer field. "
-            "It is not a surveyed construction peg."
+            "Best GIS-screened candidate identified. "
+            "The coordinate represents a candidate zone, "
+            "not a final construction peg."
         )
 
-        c1, c2 = (
-            st.columns(2)
+
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
-            "Candidate Latitude",
+
+            "Latitude",
+
             f"{site['latitude']:.6f}",
+
         )
 
+
         c2.metric(
-            "Candidate Longitude",
+
+            "Longitude",
+
             f"{site['longitude']:.6f}",
+
         )
 
-        c1, c2 = (
-            st.columns(2)
+
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
+
             "Elevation",
+
             f"{site['elevation']:.1f} m",
+
         )
+
 
         c2.metric(
+
             "Slope",
+
             f"{site['slope']:.2f}°",
+
         )
 
-        c1, c2 = (
-            st.columns(2)
+
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
+
             "TWI",
+
             f"{site['twi']:.2f}",
+
         )
 
+
         c2.metric(
+
             "Boundary Clearance",
+
             f"{site['boundary_distance']:.1f} m",
+
         )
+
+
+        if site[
+            "stream_distance"
+        ] is not None:
+
+            st.metric(
+
+                "Distance to Mapped Stream",
+
+                f"{site['stream_distance']:.1f} m",
+
+            )
 
 
     # ========================================================
-    # MAP
+    # RESULT MAP
     # ========================================================
 
     with tab_map:
+
 
         result_map = folium.Map(
 
@@ -5910,7 +6107,7 @@ if assessment:
                 "tile/{z}/{y}/{x}",
 
             attr=
-                "Esri World Imagery",
+                "Esri",
 
             name=
                 "Satellite",
@@ -5961,7 +6158,7 @@ if assessment:
                         "#69F0AE",
 
                     "fillOpacity":
-                        0.18,
+                        .18,
 
                 },
 
@@ -6032,7 +6229,9 @@ if assessment:
                 "EPSG:4326"
             )
 
-            .iloc[0]
+            .iloc[
+                0
+            ]
 
         )
 
@@ -6059,7 +6258,7 @@ if assessment:
                         "#FF5252",
 
                     "fillOpacity":
-                        0.30,
+                        .30,
 
                 },
 
@@ -6105,7 +6304,7 @@ if assessment:
             ],
 
             tooltip=
-                "Lowest DEM cell",
+                "Absolute lowest DEM location",
 
             icon=
                 folium.Icon(
@@ -6117,21 +6316,14 @@ if assessment:
         )
 
 
-        MeasureControl(
+        Fullscreen(
             position="topleft"
         ).add_to(
             result_map
         )
 
 
-        MousePosition(
-            prefix="Coordinates:"
-        ).add_to(
-            result_map
-        )
-
-
-        Fullscreen(
+        MeasureControl(
             position="topleft"
         ).add_to(
             result_map
@@ -6150,21 +6342,16 @@ if assessment:
             result_map,
 
             height=
-                650,
+                570,
 
             use_container_width=
                 True,
 
             key=
-                "result_map",
+                "geopond_result_map",
 
-        )
+            returned_objects=[],
 
-
-        st.caption(
-            "The pond rectangle is indicative only. "
-            "Final orientation should follow contour, "
-            "field survey and inlet/outlet requirements."
         )
 
 
@@ -6172,55 +6359,75 @@ if assessment:
     # HYDROLOGY
     # ========================================================
 
-    with tab_water:
+    with tab_hydrology:
 
-        c1, c2 = (
-            st.columns(2)
+
+        c1, c2 = st.columns(
+            2
         )
 
+
         c1.metric(
-            "Annual Rainfall",
+
+            "Spatial Annual Rainfall",
+
             f"{assessment['rainfall']:.0f} mm/year",
+
         )
 
+
         c2.metric(
+
             "Mean Annual Runoff",
+
             f"{assessment['mean_runoff']:.0f} mm",
+
         )
 
-        c1, c2 = (
-            st.columns(2)
+
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
+
             "75% Dependable Runoff",
+
             f"{assessment['dependable_runoff']:.0f} mm",
+
         )
+
 
         c2.metric(
+
             "75% Dependable Water",
+
             f"{assessment['dependable_volume']:,.0f} m³/year",
+
         )
 
-        c1, c2 = (
-            st.columns(2)
+
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
-            "Curve Number II",
+
+            "CN-II",
+
             f"{assessment['cn']:.1f}",
+
         )
+
 
         c2.metric(
-            "Runoff Coefficient",
-            f"{assessment['runoff_coefficient']:.3f}",
-        )
 
-        st.info(
-            "Rainfall retains the information content "
-            "of the source rainfall dataset. Spatial "
-            "resampling does not create new 30-m rainfall "
-            "observations."
+            "Runoff Coefficient",
+
+            f"{assessment['runoff_coefficient']:.3f}",
+
         )
 
 
@@ -6230,74 +6437,119 @@ if assessment:
 
     with tab_design:
 
-        c1, c2 = (
-            st.columns(2)
+
+        c1, c2 = st.columns(
+            2
         )
 
+
         c1.metric(
-            "Storage Target",
+
+            "Storage",
+
             f"{pond['target_storage']:,.0f} m³",
+
         )
 
+
         c2.metric(
+
             "Water Depth",
+
             f"{pond['water_depth']:.2f} m",
+
         )
 
-        c1, c2 = (
-            st.columns(2)
+
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
+
             "Bottom Length",
+
             f"{pond['bottom_length']:.1f} m",
+
         )
 
+
         c2.metric(
+
             "Bottom Breadth",
+
             f"{pond['bottom_breadth']:.1f} m",
+
         )
 
-        c1, c2 = (
-            st.columns(2)
+
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
+
             "Top Length",
+
             f"{pond['top_length']:.1f} m",
+
         )
 
+
         c2.metric(
+
             "Top Breadth",
+
             f"{pond['top_breadth']:.1f} m",
+
         )
 
-        c1, c2 = (
-            st.columns(2)
+
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
+
             "Excavation Depth",
+
             f"{pond['excavation_depth']:.2f} m",
+
         )
+
 
         c2.metric(
+
             "Freeboard",
+
             f"{pond['freeboard']:.2f} m",
+
         )
 
-        c1, c2 = (
-            st.columns(2)
+
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
-            "Pond Footprint",
+
+            "Footprint",
+
             f"{pond['footprint']:,.0f} m²",
+
         )
 
+
         c2.metric(
+
             "Field Occupied",
+
             f"{pond['occupied_percent']:.1f}%",
+
         )
 
 
@@ -6307,17 +6559,20 @@ if assessment:
 
     with tab_geology:
 
+
         soil_info = (
             assessment[
                 "soil_info"
             ]
         )
 
+
         geom_info = (
             assessment[
                 "geom_info"
             ]
         )
+
 
         lith_info = (
             assessment[
@@ -6326,59 +6581,86 @@ if assessment:
         )
 
 
-        c1, c2 = (
-            st.columns(2)
+        c1, c2 = st.columns(
+            2
         )
 
+
         c1.metric(
+
             "Soil Texture",
+
             soil_info[
                 "texture"
             ],
+
         )
 
+
         c2.metric(
+
             "Soil Screening",
+
             screening[
                 "soil_screen"
             ],
+
         )
 
-        c1, c2 = (
-            st.columns(2)
+
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
+
             "Geomorphology",
+
             geom_info[
                 "landform"
             ],
+
         )
 
+
         c2.metric(
+
             "Terrain Constraint",
+
             screening[
                 "terrain_constraint"
             ],
+
         )
 
-        c1, c2 = (
-            st.columns(2)
+
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
+
             "Lithological Group",
+
             lith_info[
                 "group"
             ],
+
         )
 
+
         c2.metric(
+
             "Formation",
+
             lith_info[
                 "formation"
             ],
+
         )
+
 
         st.write(
             "**Lithology:**",
@@ -6386,6 +6668,7 @@ if assessment:
                 "lithology"
             ],
         )
+
 
         st.write(
             "**Geological age:**",
@@ -6395,9 +6678,10 @@ if assessment:
         )
 
 
-        c1, c2 = (
-            st.columns(2)
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
 
@@ -6414,22 +6698,27 @@ if assessment:
 
                 else
 
-                "No data"
+                ">15 km or unavailable"
             ),
 
         )
 
+
         c2.metric(
-            "Shear-Zone Screening",
+
+            "Shear Screening",
+
             screening[
                 "shear_concern"
             ],
+
         )
 
 
-        c1, c2 = (
-            st.columns(2)
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
 
@@ -6451,12 +6740,29 @@ if assessment:
 
         )
 
+
         c2.metric(
-            "Seepage Screening",
+
+            "Seepage Risk",
+
             screening[
                 "seepage_risk"
             ],
+
         )
+
+
+        if (
+            assessment[
+                "c_horizon_distance"
+            ]
+            is not None
+        ):
+
+            st.write(
+                "**Nearest C-horizon sample:**",
+                f"{assessment['c_horizon_distance']:.0f} m",
+            )
 
 
         st.info(
@@ -6466,18 +6772,26 @@ if assessment:
         )
 
 
-        c1, c2 = (
-            st.columns(2)
+        c1, c2 = st.columns(
+            2
         )
+
 
         c1.metric(
-            "Estimated Lining Area",
+
+            "Lining Area",
+
             f"{pond['lining_area']:,.0f} m²",
+
         )
 
+
         c2.metric(
-            "Procurement Area +10%",
+
+            "Procurement +10%",
+
             f"{pond['liner_purchase_area']:,.0f} m²",
+
         )
 
 
@@ -6486,6 +6800,7 @@ if assessment:
     # ========================================================
 
     with tab_technical:
+
 
         st.write(
             "**Farmer:**",
@@ -6496,6 +6811,7 @@ if assessment:
             "Not entered",
         )
 
+
         st.write(
             "**Village:**",
             assessment[
@@ -6505,12 +6821,14 @@ if assessment:
             "Not entered",
         )
 
+
         st.write(
-            "**Observed land use:**",
+            "**Planning land use:**",
             assessment[
                 "current_lulc"
             ],
         )
+
 
         st.write(
             "**Mapped 2022 LULC:**",
@@ -6518,6 +6836,19 @@ if assessment:
                 "mapped_lulc"
             ],
         )
+
+
+        st.write(
+            "**Mapped LULC share:**",
+            f"{assessment['lulc_confidence']:.1f}%",
+        )
+
+
+        st.write(
+            "**Mapped LULC coverage:**",
+            f"{assessment['lulc_coverage']:.1f}%",
+        )
+
 
         st.write(
             "**Drainage density:**",
@@ -6529,22 +6860,30 @@ if assessment:
             ),
         )
 
+
         st.write(
             "**Flow accumulation:**",
-            round(
-                site[
-                    "flow_accumulation"
-                ],
-                2,
-            )
-            if np.isfinite(
-                site[
-                    "flow_accumulation"
-                ]
-            )
-            else
-            "No data",
+            (
+                round(
+                    site[
+                        "flow_accumulation"
+                    ],
+                    2,
+                )
+
+                if
+                np.isfinite(
+                    site[
+                        "flow_accumulation"
+                    ]
+                )
+
+                else
+
+                "No data"
+            ),
         )
+
 
         st.write(
             "**Raw site score:**",
@@ -6555,6 +6894,7 @@ if assessment:
                 3,
             ),
         )
+
 
         st.write(
             "**Adjusted site score:**",
@@ -6567,9 +6907,9 @@ if assessment:
         )
 
 
-# ============================================================
-# 22. REPORT DOWNLOAD
-# ============================================================
+    # ========================================================
+    # CSV REPORT
+    # ========================================================
 
     output = {
 
@@ -6591,7 +6931,7 @@ if assessment:
                 "field_area"
             ],
 
-        "Current_Land_Use":
+        "Confirmed_Current_Land_Use":
             assessment[
                 "current_lulc"
             ],
@@ -6599,6 +6939,16 @@ if assessment:
         "Mapped_2022_LULC":
             assessment[
                 "mapped_lulc"
+            ],
+
+        "Mapped_2022_Class_Share_percent":
+            assessment[
+                "lulc_confidence"
+            ],
+
+        "Mapped_2022_Coverage_percent":
+            assessment[
+                "lulc_coverage"
             ],
 
         "Rainfall_mm_year":
@@ -6656,6 +7006,68 @@ if assessment:
                 "twi"
             ],
 
+        "Site_Score":
+            site[
+                "adjusted_score"
+            ],
+
+        "Soil_Texture":
+            assessment[
+                "soil_info"
+            ][
+                "texture"
+            ],
+
+        "Geomorphology":
+            assessment[
+                "geom_info"
+            ][
+                "landform"
+            ],
+
+        "Lithological_Group":
+            assessment[
+                "lith_info"
+            ][
+                "group"
+            ],
+
+        "Formation":
+            assessment[
+                "lith_info"
+            ][
+                "formation"
+            ],
+
+        "Lithology":
+            assessment[
+                "lith_info"
+            ][
+                "lithology"
+            ],
+
+        "Geological_Age":
+            assessment[
+                "lith_info"
+            ][
+                "age"
+            ],
+
+        "Nearest_Shear_Zone_m":
+            assessment[
+                "shear_distance"
+            ],
+
+        "Lineament_Density":
+            assessment[
+                "lineament_density"
+            ],
+
+        "Seepage_Risk":
+            screening[
+                "seepage_risk"
+            ],
+
         "Storage_m3":
             pond[
                 "target_storage"
@@ -6701,9 +7113,9 @@ if assessment:
                 "footprint"
             ],
 
-        "Seepage_Risk":
-            screening[
-                "seepage_risk"
+        "Field_Occupied_percent":
+            pond[
+                "occupied_percent"
             ],
 
         "Lining_Area_m2":
@@ -6714,6 +7126,11 @@ if assessment:
         "Liner_Procurement_Area_m2":
             pond[
                 "liner_purchase_area"
+            ],
+
+        "Lining_Recommendation":
+            screening[
+                "lining_recommendation"
             ],
 
     }
@@ -6757,44 +7174,12 @@ if assessment:
     )
 
 
-    st.markdown(
-        """
-<div class="result-card">
-
-<b>🌱 Construction & Management Guidance</b>
-
-<br><br>
-
-• Confirm candidate position by field survey and
-micro-topographic levelling.<br>
-
-• Verify farmer ownership and boundary clearance.<br>
-
-• Do not obstruct a natural stream for an off-stream pond.<br>
-
-• Provide sediment trap and safe overflow arrangement.<br>
-
-• Inspect foundation and excavation material.<br>
-
-• Conduct field permeability testing before final lining choice.<br>
-
-• Orient the pond according to local contour and drainage.<br>
-
-• Stabilize bunds and disturbed soil using vegetation.
-
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-
-
     st.warning(
         "Engineering note: GeoPond-DSS provides GIS-based "
-        "screening and preliminary planning only. The selected "
-        "coordinate represents a GIS candidate zone rather than "
-        "a surveyed construction peg. Final pond siting, "
-        "excavation, embankment, inlet, outlet, spillway and "
-        "lining require field survey and engineering verification."
+        "screening and preliminary planning. Final siting, "
+        "pond orientation, excavation, embankment, inlet, "
+        "outlet, spillway and lining require field survey, "
+        "permeability testing and engineering verification."
     )
 
 
@@ -6814,8 +7199,4 @@ if st.button(
 
     reset_assessment()
 
-<<<<<<< HEAD
     st.rerun()
-=======
-    st.rerun()
->>>>>>> b9aaff721a59b98f8315461236c4653bf3a2eb44

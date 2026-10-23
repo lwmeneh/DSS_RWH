@@ -170,11 +170,8 @@ SUITABILITY_WEIGHTS = {
 # 3. UI THEME (CSS)
 # ============================================================
 
-st.markdown(
-    """
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-<style>
+APP_CSS = """
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap');
 :root{
   --ink:#0f2a25; --ink-2:#3d5a53; --muted:#7a8f89;
   --line:#dbe7e3; --card:#ffffff; --bg:#f3f7f6;
@@ -302,10 +299,12 @@ iframe{border-radius:14px;}
   .kv4{grid-template-columns:repeat(2,minmax(0,1fr));}
   .gp-step{min-width:120px;}
 }
-</style>
-""",
-    unsafe_allow_html=True,
-)
+"""
+
+# Inject as ONE <style> block with no blank lines: Streamlit's Markdown parser
+# ends an HTML block at a blank line and would print the rest as text.
+_css_compact = "\n".join(line for line in APP_CSS.splitlines() if line.strip())
+st.markdown(f"<style>\n{_css_compact}\n</style>", unsafe_allow_html=True)
 
 
 # ============================================================

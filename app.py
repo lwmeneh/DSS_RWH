@@ -63,12 +63,14 @@ RUNOFF_COEFFICIENT_RASTER = CACHE_DIR / "runoff_coefficient.tif"
 BOUNDARY_GPKG = CACHE_DIR / "boundary_utm46.gpkg"
 STREAMS_GPKG = CACHE_DIR / "streams_utm46.gpkg"
 LULC_GPKG = CACHE_DIR / "lulc_2021_10k_clean_utm46.gpkg"
+PROJECTED_LULC_2025_SHP = CACHE_DIR / "2025_Projected_LULC.shp"
 MGNREGA_GPKG = CACHE_DIR / "mgnrega_utm46.gpkg"
 FINAL94_GPKG = CACHE_DIR / "final94_utm46.gpkg"
 PUBLISHED_GPKG = CACHE_DIR / "published_sites_utm46.gpkg"
 
 # Original thematic vectors
 SOIL_GPKG = CACHE_DIR / "Soil_Meghalaya_50k.gpkg"
+SOIL_SHP = CACHE_DIR / "Soil_Meghalaya_50k.shp"  # fallback if GPKG has not yet been created
 GEOMORPHOLOGY_GPKG = CACHE_DIR / "Geomorphology.gpkg"
 LITHOLOGY_GPKG = CACHE_DIR / "Lithology.gpkg"
 SHEAR_ZONE_GPKG = CACHE_DIR / "Shear_Zone.gpkg"
@@ -239,34 +241,95 @@ if missing:
 # ============================================================
 
 @st.cache_resource(show_spinner=False)
-def load_vector(path_string):
-    path = Path(path_string)
-    if not path.exists():
+def load_vector_utm(path_string, fallback_path_string=None):
+    """Load a vector layer and normalize it to WGS 84 / UTM Zone 46N (EPSG:32646).
+
+    The source GeoPackages supplied for geomorphology, lithology, shear zone and
+    C-horizon are EPSG:4326. Normalizing them once at load time prevents CRS
+    mismatch during point-in-polygon and distance calculations.
+    """
+    candidates = [Path(path_string)]
+    if fallback_path_string:
+        candidates.append(Path(fallback_path_string))
+
+    path = next((p for p in candidates if p.exists()), None)
+    if path is None:
         return None
+
     try:
         gdf = gpd.read_file(path)
-        if gdf.crs is None:
+        if gdf.empty:
             return gdf
+        if gdf.crs is None:
+            # Never guess an unknown CRS; report unavailable instead.
+            return None
+
+        # Repair obvious invalid geometries where possible.
+        try:
+            bad = ~gdf.geometry.is_valid
+            if bad.any():
+                gdf = gdf.copy()
+                gdf.loc[bad, "geometry"] = gdf.loc[bad, "geometry"].make_valid()
+        except Exception:
+            pass
+
+        # One common projected CRS for ALL GeoPond vector analysis.
+        if gdf.crs.to_string().upper() != WORKING_CRS:
+            gdf = gdf.to_crs(WORKING_CRS)
+
         return gdf
     except Exception:
         return None
 
 
-boundary_utm = load_vector(str(BOUNDARY_GPKG))
-streams_utm = load_vector(str(STREAMS_GPKG))
-lulc_utm = load_vector(str(LULC_GPKG))
-mgnrega_utm = load_vector(str(MGNREGA_GPKG))
-final94_utm = load_vector(str(FINAL94_GPKG))
-published_utm = load_vector(str(PUBLISHED_GPKG))
-soil_gdf = load_vector(str(SOIL_GPKG))
-geomorph_gdf = load_vector(str(GEOMORPHOLOGY_GPKG))
-lithology_gdf = load_vector(str(LITHOLOGY_GPKG))
-shear_gdf = load_vector(str(SHEAR_ZONE_GPKG))
-c_horizon_gdf = load_vector(str(SOIL_C_HORIZON_GPKG))
+boundary_utm = load_vector_utm(str(BOUNDARY_GPKG))
+streams_utm = load_vector_utm(str(STREAMS_GPKG))
+lulc_utm = load_vector_utm(str(LULC_GPKG))
+projected_lulc_2025_utm = load_vector_utm(str(PROJECTED_LULC_2025_SHP))
+mgnrega_utm = load_vector_utm(str(MGNREGA_GPKG))
+final94_utm = load_vector_utm(str(FINAL94_GPKG))
+published_utm = load_vector_utm(str(PUBLISHED_GPKG))
+
+# Original thematic layers. These are normalized to EPSG:32646 in memory.
+soil_gdf = load_vector_utm(str(SOIL_GPKG), str(SOIL_SHP))
+geomorph_gdf = load_vector_utm(str(GEOMORPHOLOGY_GPKG))
+lithology_gdf = load_vector_utm(str(LITHOLOGY_GPKG))
+shear_gdf = load_vector_utm(str(SHEAR_ZONE_GPKG))
+c_horizon_gdf = load_vector_utm(str(SOIL_C_HORIZON_GPKG))
 
 boundary_wgs = None
-if boundary_utm is not None and not boundary_utm.empty and boundary_utm.crs is not None:
+if boundary_utm is not None and not boundary_utm.empty:
     boundary_wgs = boundary_utm.to_crs("EPSG:4326")
+
+# Lightweight deployment diagnostic. This makes missing GitHub/Streamlit files
+# visible instead of silently returning "Unknown" everywhere.
+THEMATIC_LAYER_STATUS = {
+    "Soil": soil_gdf is not None and not soil_gdf.empty,
+    "Geomorphology": geomorph_gdf is not None and not geomorph_gdf.empty,
+    "Lithology": lithology_gdf is not None and not lithology_gdf.empty,
+    "Shear Zone": shear_gdf is not None and not shear_gdf.empty,
+    "Soil C Horizon": c_horizon_gdf is not None and not c_horizon_gdf.empty,
+}
+
+# ============================================================
+# THEMATIC DATA STATUS
+# ============================================================
+
+missing_thematic = [name for name, ok in THEMATIC_LAYER_STATUS.items() if not ok]
+if missing_thematic:
+    st.warning(
+        "The following original thematic layers are not available to GeoPond-DSS: "
+        + ", ".join(missing_thematic)
+        + ". Check that the files are committed under data/cache with the exact filenames. "
+          "Terrain/runoff analysis can continue, but geological/seepage outputs will be incomplete."
+    )
+
+with st.expander("🧭 GIS layer / CRS status", expanded=False):
+    st.write(f"**Analysis CRS:** {WORKING_CRS} — WGS 84 / UTM Zone 46N")
+    for name, ok in THEMATIC_LAYER_STATUS.items():
+        st.write(f"{'✅' if ok else '❌'} {name}: {'loaded and reprojected to EPSG:32646' if ok else 'not loaded'}")
+
+
 
 
 # ============================================================
@@ -429,42 +492,61 @@ def normalize_array(array, valid_mask):
 # ============================================================
 
 def point_record(gdf, x, y, point_crs=WORKING_CRS):
-    if gdf is None or gdf.empty or gdf.crs is None:
+    """Return the polygon feature containing the UTM pond point."""
+    if gdf is None or gdf.empty:
         return None
-    point_gdf = gpd.GeoDataFrame({"id": [1]}, geometry=[Point(x, y)], crs=point_crs).to_crs(gdf.crs)
-    p = point_gdf.geometry.iloc[0]
+
+    # All loaded GeoPond vectors are already EPSG:32646.
+    if point_crs != WORKING_CRS:
+        p = gpd.GeoSeries([Point(x, y)], crs=point_crs).to_crs(WORKING_CRS).iloc[0]
+    else:
+        p = Point(x, y)
+
     try:
         idx = list(gdf.sindex.intersection(p.bounds))
-        candidates = gdf.iloc[idx] if idx else gdf
+        candidates = gdf.iloc[idx] if idx else gdf.iloc[0:0]
     except Exception:
         candidates = gdf
-    hit = candidates[candidates.intersects(p)]
+
+    if candidates.empty:
+        return None
+
+    # covers() includes points exactly on polygon boundaries; intersects() is fallback.
+    try:
+        mask = candidates.geometry.covers(p)
+        hit = candidates[mask]
+    except Exception:
+        hit = candidates[candidates.intersects(p)]
+
     if hit.empty:
         return None
     return hit.iloc[0]
 
 
 def nearest_distance_to_layer(gdf, x, y, point_crs=WORKING_CRS):
-    if gdf is None or gdf.empty or gdf.crs is None:
+    """Nearest distance in metres because all layers are normalized to EPSG:32646."""
+    if gdf is None or gdf.empty:
         return None
-    point = gpd.GeoSeries([Point(x, y)], crs=point_crs).to_crs(gdf.crs).iloc[0]
-    distances = gdf.geometry.distance(point)
+
+    if point_crs != WORKING_CRS:
+        p = gpd.GeoSeries([Point(x, y)], crs=point_crs).to_crs(WORKING_CRS).iloc[0]
+    else:
+        p = Point(x, y)
+
+    distances = gdf.geometry.distance(p)
     if distances.empty:
         return None
-    # If geographic CRS, convert both to UTM for meaningful metres
-    if getattr(gdf.crs, "is_geographic", False):
-        gdf_m = gdf.to_crs(WORKING_CRS)
-        p_m = gpd.GeoSeries([point], crs=gdf.crs).to_crs(WORKING_CRS).iloc[0]
-        distances = gdf_m.geometry.distance(p_m)
     return float(distances.min())
 
 
 def nearest_record(gdf, x, y, point_crs=WORKING_CRS):
-    if gdf is None or gdf.empty or gdf.crs is None:
+    if gdf is None or gdf.empty:
         return None, None
-    gdf_m = gdf.to_crs(WORKING_CRS)
-    p = Point(x, y)
-    distances = gdf_m.geometry.distance(p)
+    if point_crs != WORKING_CRS:
+        p = gpd.GeoSeries([Point(x, y)], crs=point_crs).to_crs(WORKING_CRS).iloc[0]
+    else:
+        p = Point(x, y)
+    distances = gdf.geometry.distance(p)
     if distances.empty:
         return None, None
     idx = distances.idxmin()
@@ -654,6 +736,62 @@ def mapped_lulc_summary(field_geojson):
         "coverage": coverage,
         "classification": classification,
     }
+
+
+def projected_lulc_2025_reference(field_geojson):
+    """
+    Optional secondary GIS reference from the 2025 projected LULC layer.
+    This layer is NOT used as field truth because it is a projection, not a
+    current ground survey. It is used only to help diagnose disagreement
+    between the 2021 map and current observed land use.
+    """
+    if projected_lulc_2025_utm is None or projected_lulc_2025_utm.empty:
+        return {"dominant": "Unavailable", "confidence": 0.0, "coverage": 0.0, "composition": []}
+
+    class_col = first_matching_column(
+        projected_lulc_2025_utm.columns,
+        ["Class_name", "class_name", "Class", "LULC", "category"]
+    )
+    if not class_col:
+        return {"dominant": "Unavailable", "confidence": 0.0, "coverage": 0.0, "composition": []}
+
+    field_geom = geometry_gdf(field_geojson).to_crs(WORKING_CRS).geometry.iloc[0]
+    if not field_geom.is_valid:
+        field_geom = field_geom.buffer(0)
+    field_area = float(field_geom.area)
+    if field_area <= 0:
+        return {"dominant": "Unavailable", "confidence": 0.0, "coverage": 0.0, "composition": []}
+
+    layer = projected_lulc_2025_utm
+    try:
+        ids = list(layer.sindex.intersection(field_geom.bounds))
+        cand = layer.iloc[ids].copy() if ids else layer.iloc[0:0].copy()
+    except Exception:
+        cand = layer.copy()
+    cand = cand[cand.intersects(field_geom)].copy()
+    if cand.empty:
+        return {"dominant": "No coverage", "confidence": 0.0, "coverage": 0.0, "composition": []}
+
+    cand["_class"] = cand[class_col].apply(canonical_lulc_name)
+    cand["_area"] = cand.geometry.intersection(field_geom).area
+    grouped = cand.groupby("_class", dropna=False)["_area"].sum().reset_index()
+    grouped = grouped[grouped["_area"] > 0.5].sort_values("_area", ascending=False)
+    total = float(grouped["_area"].sum()) if not grouped.empty else 0.0
+    coverage = min(100.0, 100.0 * total / field_area) if field_area else 0.0
+    if grouped.empty or total <= 0:
+        return {"dominant": "Unavailable", "confidence": 0.0, "coverage": coverage, "composition": []}
+
+    dominant = safe_text(grouped.iloc[0]["_class"])
+    confidence = float(grouped.iloc[0]["_area"] / total * 100.0)
+    composition = [
+        {
+            "LULC": safe_text(r["_class"]),
+            "Area (ha)": round(float(r["_area"]) / 10000.0, 3),
+            "Percent of field": round(float(r["_area"]) / field_area * 100.0, 1),
+        }
+        for _, r in grouped.iterrows()
+    ]
+    return {"dominant": dominant, "confidence": confidence, "coverage": coverage, "composition": composition}
 
 
 # ============================================================
@@ -1098,6 +1236,7 @@ if field:
     mapped_lulc_dominant = lulc_result["dominant"]
     lulc_confidence = lulc_result["confidence"]
     lulc_coverage = lulc_result["coverage"]
+    projected_2025 = projected_lulc_2025_reference(field)
 
     st.success(f"✅ Farmer field captured successfully: {area_ha:.3f} ha")
 
@@ -1134,6 +1273,19 @@ if field:
             "The historical GIS LULC will not be used as the current farm class."
         )
 
+    # Optional 2025 projected LULC is a supporting GIS reference, not field truth.
+    if projected_2025["dominant"] not in ["Unavailable", "No coverage", "Unknown", ""]:
+        with st.expander("🛰️ 2025 Projected LULC — supporting reference only", expanded=False):
+            st.write(f"**Projected dominant class:** {projected_2025['dominant']}")
+            st.write(f"**Projected-class share:** {projected_2025['confidence']:.1f}%")
+            st.write(f"**Projected GIS coverage:** {projected_2025['coverage']:.1f}%")
+            st.info(
+                "This 2025 layer is a projected/derived GIS product, not a field observation. "
+                "It is used only as supporting evidence when the older 2021 map disagrees with the current field condition."
+            )
+            if projected_2025["composition"]:
+                st.dataframe(pd.DataFrame(projected_2025["composition"]), use_container_width=True, hide_index=True)
+
     # Historical GIS layer is shown separately and never overrides current observation.
     with st.expander("🗺️ Historical 2021 GIS LULC — reference only", expanded=False):
         st.write(f"**Mapped reference classification:** {mapped_lulc}")
@@ -1157,9 +1309,14 @@ if field:
 
     if current_lulc and mapped_lulc_dominant not in ["Unknown", ""] and current_lulc != mapped_lulc_dominant:
         st.caption(
-            f"Historical GIS reference = {mapped_lulc_dominant}; current observed land use = {current_lulc}. "
+            f"Historical 2021 GIS reference = {mapped_lulc_dominant}; current observed land use = {current_lulc}. "
             "The current observed class is used by the DSS."
         )
+        if projected_2025["dominant"] == current_lulc:
+            st.success(
+                f"The optional 2025 projected GIS layer also indicates **{current_lulc}**, supporting the current field observation. "
+                f"The older 2021 class (**{mapped_lulc_dominant}**) is therefore treated as historical/outdated for this parcel."
+            )
 
 
 # ============================================================
@@ -1283,6 +1440,7 @@ if field:
                 "field_area": area_ha,
                 "mapped_lulc": mapped_lulc,
                 "mapped_lulc_dominant": mapped_lulc_dominant,
+                "projected_2025_lulc": projected_2025.get("dominant", "Unavailable"),
                 "lulc_confidence": lulc_confidence,
                 "lulc_coverage": lulc_coverage,
                 "current_lulc": st.session_state.current_lulc,
@@ -1502,6 +1660,7 @@ if assessment:
         "Field_Area_ha": assessment["field_area"],
         "GIS_LULC_Classification": assessment["mapped_lulc"],
         "GIS_Dominant_LULC": assessment.get("mapped_lulc_dominant", "Unknown"),
+        "Projected_2025_LULC_Reference": assessment.get("projected_2025_lulc", "Unavailable"),
         "GIS_LULC_Confidence_percent": assessment.get("lulc_confidence", np.nan),
         "GIS_LULC_Coverage_percent": assessment.get("lulc_coverage", np.nan),
         "Confirmed_Current_Land_Use": assessment["current_lulc"],

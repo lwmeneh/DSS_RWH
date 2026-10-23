@@ -12,6 +12,7 @@
 
 from pathlib import Path
 import base64
+import hashlib
 import html
 import io
 import json
@@ -105,6 +106,19 @@ RUNOFF_COEFFICIENT_RASTER = CACHE_DIR / "runoff_coefficient.tif"
 BOUNDARY_GPKG = CACHE_DIR / "boundary_utm46.gpkg"
 STREAMS_GPKG = CACHE_DIR / "streams_utm46.gpkg"
 LULC_2022_GPKG = CACHE_DIR / "lulc_2021_10k_clean_utm46.gpkg"
+
+# LULC 2015: either a column in the 2022 layer, or a separate file in data/cache.
+# Put your exact file name first in this list if it is not detected automatically.
+LULC_2015_FILES = [
+    CACHE_DIR / "lulc_2015_10k_clean_utm46.gpkg",
+    CACHE_DIR / "lulc_2015_utm46.gpkg",
+    CACHE_DIR / "LULC_2015.gpkg",
+    CACHE_DIR / "LULC_2015.shp",
+    CACHE_DIR / "LULC_2015.geojson",
+]
+LULC_2015_COLUMNS = ["LULC_2015", "LULC2015", "LU_2015", "LULC_15", "Class_2015", "LULC15"]
+LULC_GENERIC_COLUMNS = ["LULC", "LULC_CLASS", "Class", "Class_Name", "LU_Class", "Landuse",
+                        "Land_Use", "LANDUSE", "Description", "Legend", "Level_II", "Level2"]
 PROJECTED_LULC_2025_SHP = CACHE_DIR / "2025_Projected_LULC.shp"
 SOIL_GPKG = CACHE_DIR / "Soil_Meghalaya_50k.gpkg"
 SOIL_SHP = CACHE_DIR / "Soil_Meghalaya_50k.shp"
@@ -128,6 +142,7 @@ ESRI_LABELS = (
 
 LAND_USE_OPTIONS = [
     "Crop land",
+    "Fallow land",
     "Plantation",
     "Shifting Cultivation",
     "Scrub land",
@@ -141,6 +156,7 @@ LAND_USE_OPTIONS = [
 
 LULC_COLORS = {
     "Crop land": "#f4d03f",
+    "Fallow land": "#e8c872",
     "Plantation": "#a3d977",
     "Shifting Cultivation": "#e59866",
     "Scrub land": "#d7bde2",
@@ -154,6 +170,20 @@ LULC_COLORS = {
 
 # Land uses where a farm pond is normally not appropriate
 RESTRICTED_LULC = {"Forest Dense", "Built up", "Waterbody", "River/Stream"}
+
+# Agricultural classes, and classes that agricultural land is often mapped as
+# in a single-date image (fallow, jhum regrowth, bush fallow).
+AGRICULTURAL_LULC = {"Crop land", "Fallow land", "Plantation", "Shifting Cultivation"}
+TRANSITIONAL_LULC = {"Scrub land", "Forest Open", "Fallow land"}
+
+# Representative SCS curve numbers (AMC II, HSG C; after USDA TR-55 / NEH-4).
+# Only the DIFFERENCE between classes is used, to shift the mapped CN raster
+# to the land use actually observed in the field.
+CN_BY_LULC = {
+    "Crop land": 85, "Fallow land": 86, "Plantation": 76, "Shifting Cultivation": 86,
+    "Scrub land": 73, "Forest Open": 77, "Forest Moderately Dense": 73, "Forest Dense": 70,
+    "Built up": 90, "Waterbody": 98, "River/Stream": 98,
+}
 
 # Weights of the composite suitability index (sum = 1.0)
 SUITABILITY_WEIGHTS = {
@@ -198,6 +228,9 @@ html, body, [class*="css"]{font-family:Inter,"Segoe UI",Arial,sans-serif;}
 [data-testid="stSidebar"] [data-testid="stExpander"]{
   background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:12px;
 }
+[data-testid="stSidebar"] .stButton>button{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.35);}
+[data-testid="stSidebar"] .stButton>button:hover{background:rgba(255,255,255,.20);border-color:#fff;}
+[data-testid="stSidebar"] .stButton>button p{color:#ffffff !important;}
 .sb-brand{display:flex;gap:10px;align-items:center;padding:4px 2px 12px;border-bottom:1px solid rgba(255,255,255,.14);margin-bottom:10px;}
 .sb-brand b{font-size:18px;letter-spacing:.01em;}
 .sb-brand span{display:block;font-size:11px;opacity:.7;}
@@ -214,7 +247,8 @@ html, body, [class*="css"]{font-family:Inter,"Segoe UI",Arial,sans-serif;}
   content:"";position:absolute;right:-60px;top:-60px;width:320px;height:320px;border-radius:50%;
   background:radial-gradient(circle,rgba(255,255,255,.16),transparent 65%);
 }
-.gp-header-row{display:flex;align-items:center;gap:20px;position:relative;z-index:1;}
+.gp-header-row{display:flex;align-items:center;gap:20px;position:relative;z-index:1;flex-wrap:wrap;}
+.gp-header-row>div:nth-child(2){flex:1 1 380px;min-width:0;}
 .gp-logo img{width:84px;height:84px;object-fit:contain;background:#fff;border-radius:14px;padding:6px;}
 .gp-org{font-size:10.5px;font-weight:800;letter-spacing:.14em;opacity:.78;}
 .gp-institute{font-size:15px;font-weight:600;margin-top:2px;opacity:.95;}
@@ -289,6 +323,10 @@ iframe{border-radius:14px;}
 .legend-bar{height:10px;border-radius:6px;background:linear-gradient(90deg,#d73027,#fc8d59,#fee08b,#91cf60,#1a9850);}
 .legend-row{display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted);margin-top:3px;}
 
+@media only screen and (max-width:1250px){
+  .gp-head-stats{margin-left:0;}
+  .gp-title{font-size:27px;}
+}
 @media only screen and (max-width:900px){
   .block-container{padding:.2rem .3rem 2rem;}
   .gp-header{padding:14px 12px;border-radius:14px;}
@@ -453,10 +491,52 @@ def _ok(g):
     return g is not None and not g.empty
 
 
+def _match_column(columns, preferred):
+    lookup = {re.sub(r"[^a-z0-9]+", "", str(c).lower()): c for c in columns}
+    for cand in preferred:
+        key = re.sub(r"[^a-z0-9]+", "", cand.lower())
+        if key in lookup:
+            return lookup[key]
+    return None
+
+
+def _find_2015_source():
+    """Locate LULC 2015: a column in the 2022 layer, else a separate file in data/cache."""
+    if _ok(lulc_2022_utm):
+        col = _match_column(lulc_2022_utm.columns, LULC_2015_COLUMNS)
+        if col:
+            return lulc_2022_utm, col, f"{LULC_2022_GPKG.name} → {col}"
+    files = [p for p in LULC_2015_FILES if p.exists()]
+    for pattern in ("*2015*.gpkg", "*2015*.shp", "*2015*.geojson"):
+        files += [p for p in sorted(CACHE_DIR.glob(pattern)) if p not in files]
+    for path in files:
+        gdf = load_vector_utm(str(path))
+        if not _ok(gdf):
+            continue
+        col = (_match_column(gdf.columns, LULC_2015_COLUMNS)
+               or _match_column(gdf.columns, LULC_GENERIC_COLUMNS))
+        if col:
+            return gdf, col, f"{path.name} → {col}"
+    return None, None, "not found"
+
+
+# year → {"gdf", "column", "source"}
+LULC_SOURCES = {}
+if _ok(lulc_2022_utm):
+    _c22 = _match_column(lulc_2022_utm.columns, ["LULC_2022", "LULC2022"] + LULC_GENERIC_COLUMNS)
+    if _c22:
+        LULC_SOURCES[2022] = {"gdf": lulc_2022_utm, "column": _c22,
+                              "source": f"{LULC_2022_GPKG.name} → {_c22}"}
+_g15, _c15, _s15 = _find_2015_source()
+if _g15 is not None:
+    LULC_SOURCES[2015] = {"gdf": _g15, "column": _c15, "source": _s15}
+
+
 LAYER_STATUS = {
     "District boundary": _ok(boundary_utm),
     "Drainage network": _ok(streams_utm),
-    "LULC 2022 (LULC_2022)": _ok(lulc_2022_utm) and "LULC_2022" in lulc_2022_utm.columns,
+    "LULC 2015": 2015 in LULC_SOURCES,
+    "LULC 2022": 2022 in LULC_SOURCES,
     "Projected LULC 2025": _ok(projected_lulc_2025_utm),
     "Soil (1:50k)": _ok(soil_gdf),
     "Geomorphology": _ok(geomorph_gdf),
@@ -741,8 +821,10 @@ GEOMORPH_FIELDS = ["legend_sho", "description", "descriptio", "geomorphology", "
 # ============================================================
 
 def canonical_lulc_name(value):
+    """Map heterogeneous LULC legends (2015 / 2022 / NRSC Level-II) to one class list."""
     text = safe_text(value)
-    mapping_dict = {
+    key = norm_name(text)
+    exact = {
         "cropland": "Crop land", "agriculture": "Crop land", "agriculturalland": "Crop land",
         "plantation": "Plantation",
         "shiftingcultivation": "Shifting Cultivation", "jhum": "Shifting Cultivation",
@@ -754,75 +836,217 @@ def canonical_lulc_name(value):
         "builtup": "Built up", "settlement": "Built up",
         "waterbody": "Waterbody", "riverstream": "River/Stream",
     }
-    return mapping_dict.get(norm_name(text), text)
+    if key in exact:
+        return exact[key]
+    # keyword fallbacks for differently worded legends
+    rules = [
+        (("shifting", "jhum", "abandoned"), "Shifting Cultivation"),
+        (("fallow",), "Fallow land"),
+        (("crop", "agri", "kharif", "rabi", "paddy", "cultivat", "terrace"), "Crop land"),
+        (("plantation", "orchard", "horticult", "arecanut", "teagarden"), "Plantation"),
+        (("scrub", "shrub", "bush"), "Scrub land"),
+        (("river", "stream", "drain"), "River/Stream"),
+        (("water", "pond", "lake", "reservoir", "tank"), "Waterbody"),
+        (("built", "settlement", "urban", "rural", "village", "habitation", "industrial"), "Built up"),
+    ]
+    for words, cls in rules:
+        if any(w in key for w in words):
+            return cls
+    if "forest" in key:
+        if "dense" in key and "moderate" not in key:
+            return "Forest Dense"
+        if "moderate" in key:
+            return "Forest Moderately Dense"
+        return "Forest Open"
+    return text
 
 
-def mapped_lulc_summary(field_geojson):
-    empty_result = {
-        "composition": [], "dominant": "Unknown", "confidence": 0.0,
-        "coverage": 0.0, "classification": "Unavailable",
-    }
-    if lulc_2022_utm is None or lulc_2022_utm.empty or "LULC_2022" not in lulc_2022_utm.columns:
-        return empty_result
+def _empty_lulc(year):
+    return {"year": year, "available": False, "composition": [], "dominant": "Unknown",
+            "confidence": 0.0, "coverage": 0.0, "agri_percent": 0.0,
+            "classification": "Unavailable", "agri_geom": None}
+
+
+def mapped_lulc_summary(field_geojson, year):
+    """Area composition and core-dominant class of one LULC year inside the field."""
+    src = LULC_SOURCES.get(year)
+    if src is None:
+        return _empty_lulc(year)
+    gdf, column = src["gdf"], src["column"]
 
     field_geom = to_utm_geometry(field_geojson)
     if not field_geom.is_valid:
         field_geom = field_geom.buffer(0)
     field_area = field_geom.area
     if field_area <= 0:
-        return empty_result
+        return _empty_lulc(year)
 
     core_buffer = min(5.0, max(1.0, 0.02 * math.sqrt(field_area)))
     field_core = field_geom.buffer(-core_buffer)
     if field_core.is_empty or field_core.area < 0.35 * field_area:
         field_core = field_geom
 
-    candidate = local_subset(lulc_2022_utm, field_geom)
+    candidate = local_subset(gdf, field_geom)
     if candidate is None:
-        return empty_result
+        out = _empty_lulc(year)
+        out["available"] = True
+        out["classification"] = "No mapped polygons in field"
+        return out
     candidate = candidate.copy()
-    candidate["_class"] = candidate["LULC_2022"].apply(canonical_lulc_name)
-    candidate["_full_area"] = candidate.geometry.intersection(field_geom).area
+    candidate["_class"] = candidate[column].apply(canonical_lulc_name)
+    candidate["_clip"] = candidate.geometry.intersection(field_geom)
+    candidate["_full_area"] = candidate["_clip"].area
     candidate["_core_area"] = candidate.geometry.intersection(field_core).area
 
-    grouped = (
-        candidate.groupby("_class", dropna=False)["_full_area"].sum().reset_index()
-    )
+    grouped = candidate.groupby("_class", dropna=False)["_full_area"].sum().reset_index()
     grouped = grouped[grouped["_full_area"] > 0.5].sort_values("_full_area", ascending=False)
-    mapped_area = float(grouped["_full_area"].sum())
-    coverage = min(100.0, mapped_area / field_area * 100)
+    coverage = min(100.0, float(grouped["_full_area"].sum()) / field_area * 100)
 
     composition = [
-        {
-            "LULC": row["_class"],
-            "Area (ha)": round(row["_full_area"] / 10000, 3),
-            "Percent of field": round(row["_full_area"] / field_area * 100, 1),
-        }
-        for _, row in grouped.iterrows()
+        {"LULC": r["_class"], "Area (ha)": round(r["_full_area"] / 10000, 3),
+         "Percent of field": round(r["_full_area"] / field_area * 100, 1)}
+        for _, r in grouped.iterrows()
     ]
 
-    core_grouped = (
-        candidate.groupby("_class")["_core_area"].sum().reset_index()
-        .sort_values("_core_area", ascending=False)
-    )
-    if core_grouped.empty:
+    core_grouped = (candidate.groupby("_class")["_core_area"].sum().reset_index()
+                    .sort_values("_core_area", ascending=False))
+    core_total = core_grouped["_core_area"].sum() if not core_grouped.empty else 0
+    if core_grouped.empty or core_total <= 0:
         dominant, confidence = "Unknown", 0.0
     else:
         dominant = core_grouped.iloc[0]["_class"]
-        core_total = core_grouped["_core_area"].sum()
-        confidence = core_grouped.iloc[0]["_core_area"] / core_total * 100 if core_total > 0 else 0
+        confidence = core_grouped.iloc[0]["_core_area"] / core_total * 100
+
+    agri = candidate[candidate["_class"].isin(AGRICULTURAL_LULC)]
+    agri_geom = unary_union(agri["_clip"].tolist()) if not agri.empty else None
+    agri_percent = (agri_geom.area / field_area * 100) if agri_geom is not None else 0.0
 
     if coverage < 70:
         classification = "Incomplete GIS coverage"
     elif confidence >= 70:
-        classification = f"2022 GIS reference: {dominant}"
+        classification = f"{year}: {dominant}"
     else:
-        classification = f"Mixed GIS reference: {dominant}"
+        classification = f"{year}: mixed, mainly {dominant}"
 
-    return {
-        "composition": composition, "dominant": dominant, "confidence": float(confidence),
-        "coverage": float(coverage), "classification": classification,
-    }
+    return {"year": year, "available": True, "composition": composition, "dominant": dominant,
+            "confidence": float(confidence), "coverage": float(coverage),
+            "agri_percent": float(min(agri_percent, 100.0)),
+            "classification": classification, "agri_geom": agri_geom}
+
+
+def reconcile_lulc(field_geojson, s15, s22):
+    """
+    Combine LULC 2015 and 2022 into one suggested planning land use.
+
+    Single-date maps often record fallow cropland and jhum regrowth as scrub /
+    open forest. If the field was agricultural in 2015 and is transitional in
+    2022, the agricultural class is suggested (to be confirmed in the field).
+    """
+    d15 = s15["dominant"] if s15["available"] else "Unknown"
+    d22 = s22["dominant"] if s22["available"] else "Unknown"
+
+    field_area = to_utm_geometry(field_geojson).area
+    geoms = [g for g in (s15.get("agri_geom"), s22.get("agri_geom")) if g is not None]
+    agri_any = (unary_union(geoms).area / field_area * 100) if geoms and field_area > 0 else 0.0
+    agri_any = float(min(agri_any, 100.0))
+
+    if d15 == "Unknown" and d22 == "Unknown":
+        suggested, status, level = None, "No LULC evidence for this field", "unk"
+        note = "Select the observed land use from the field visit."
+    elif d15 == "Unknown":
+        suggested, status, level = d22, "2022 only (2015 not available)", "mod"
+        note = "Only one LULC year is available; confirm the land use in the field."
+    elif d22 == "Unknown":
+        suggested, status, level = d15, "2015 only (2022 not available)", "mod"
+        note = "Only one LULC year is available; confirm the land use in the field."
+    elif d15 == d22:
+        suggested, status, level = d22, f"Stable: {d22} in 2015 and 2022", "low"
+        note = "Both years agree."
+    elif d15 in AGRICULTURAL_LULC and d22 in TRANSITIONAL_LULC:
+        suggested, status, level = d15, f"{d15} (2015) → {d22} (2022)", "high"
+        note = (f"Likely fallow or jhum-cycle land mapped as {d22.lower()} in 2022. "
+                f"Suggested planning land use: {d15} — confirm with the farmer.")
+    elif d22 in AGRICULTURAL_LULC:
+        suggested, status, level = d22, f"{d15} (2015) → {d22} (2022)", "mod"
+        note = "Brought under agriculture after 2015."
+    else:
+        suggested, status, level = d22, f"{d15} (2015) → {d22} (2022)", "mod"
+        note = "Land use changed between the two maps; confirm in the field."
+
+    # Strong agricultural footprint in either year overrides a non-agricultural default
+    if suggested not in AGRICULTURAL_LULC and agri_any >= 50:
+        agri_cls = d15 if d15 in AGRICULTURAL_LULC else d22 if d22 in AGRICULTURAL_LULC else "Crop land"
+        note += f" {agri_any:.0f}% of the field is agricultural in at least one year; suggesting {agri_cls}."
+        suggested = agri_cls
+
+    return {"d15": d15, "d22": d22, "suggested": suggested, "status": status,
+            "level": level, "note": note, "agri_any": agri_any,
+            "agri_15": s15["agri_percent"], "agri_22": s22["agri_percent"]}
+
+
+def table_cn_for_composition(composition):
+    """Area-weighted table CN of a mapped composition (classes not in table ignored)."""
+    num = den = 0.0
+    for row in composition:
+        cn = CN_BY_LULC.get(row["LULC"])
+        if cn is not None:
+            num += cn * row["Percent of field"]
+            den += row["Percent of field"]
+    return num / den if den > 0 else None
+
+
+def scs_runoff(p_mm, cn):
+    s = 25400.0 / cn - 254.0
+    ia = 0.2 * s
+    return (p_mm - ia) ** 2 / (p_mm - ia + s) if p_mm > ia else 0.0
+
+
+def runoff_lulc_correction(cn_map, c_map, mapped_composition, observed_class):
+    """
+    Shift the mapped CN by the table difference (observed − mapped land use) and
+    rescale runoff. The representative event depth is calibrated so SCS-CN with
+    the mapped CN reproduces the mapped runoff coefficient.
+    """
+    out = {"applied": False, "factor": 1.0, "cn_map": cn_map, "cn_adj": cn_map,
+           "c_map": c_map, "c_adj": c_map, "event_p": np.nan, "note": ""}
+    cn_tab_map = table_cn_for_composition(mapped_composition)
+    cn_tab_obs = CN_BY_LULC.get(observed_class)
+    if cn_tab_map is None or cn_tab_obs is None:
+        out["note"] = "No mapped LULC to compare with — runoff used as mapped."
+        return out
+    if not (np.isfinite(cn_map) and np.isfinite(c_map)) or cn_map <= 0 or c_map <= 0:
+        out["note"] = "CN or runoff coefficient unavailable — runoff used as mapped."
+        return out
+    delta = cn_tab_obs - cn_tab_map
+    if abs(delta) < 0.5:
+        out["note"] = "Observed land use matches the mapped land use — no correction needed."
+        return out
+
+    cn_adj = float(np.clip(cn_map + delta, 30, 98))
+
+    def ratio(p, cn):
+        return scs_runoff(p, cn) / p
+
+    lo, hi = 1.0, 3000.0
+    if ratio(lo, cn_map) < c_map < ratio(hi, cn_map):
+        for _ in range(80):
+            mid = (lo + hi) / 2
+            if ratio(mid, cn_map) < c_map:
+                lo = mid
+            else:
+                hi = mid
+        p_event = (lo + hi) / 2
+    else:
+        p_event = 75.0
+    c_model = ratio(p_event, cn_map)
+    factor = ratio(p_event, cn_adj) / c_model if c_model > 0 else 1.0
+    factor = float(np.clip(factor, 0.25, 4.0))
+
+    out.update({"applied": True, "factor": factor, "cn_adj": cn_adj,
+                "c_adj": float(min(c_map * factor, 0.98)), "event_p": float(p_event),
+                "note": (f"CN shifted {delta:+.1f} (mapped mix ≈ {cn_tab_map:.0f} → "
+                         f"{observed_class} {cn_tab_obs}); runoff × {factor:.2f}.")})
+    return out
 
 
 # ============================================================
@@ -1236,11 +1460,14 @@ CHART_FONT = dict(family="Inter, Segoe UI, Arial", color="#0f2a25", size=12)
 
 
 def _layout(fig, height=320, **kw):
-    fig.update_layout(
+    # Defaults first, caller overrides second — never pass a key twice.
+    settings = dict(
         height=height, margin=dict(l=10, r=10, t=40, b=10),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=CHART_FONT, **kw,
+        font=CHART_FONT,
     )
+    settings.update(kw)
+    fig.update_layout(**settings)
     return fig
 
 
@@ -1329,16 +1556,29 @@ def chart_cross_section(p):
                    legend=dict(orientation="h", y=-0.25))
 
 
-def chart_lulc_donut(composition):
-    df = pd.DataFrame(composition)
-    fig = go.Figure(go.Pie(
-        labels=df["LULC"], values=df["Area (ha)"], hole=0.62,
-        marker=dict(colors=[LULC_COLORS.get(c, "#95a5a6") for c in df["LULC"]],
-                    line=dict(color="#fff", width=2)),
-        textinfo="percent", sort=False,
-    ))
-    return _layout(fig, 260, showlegend=True, legend=dict(orientation="v", x=1, y=0.5),
-                   margin=dict(l=0, r=0, t=10, b=0))
+def chart_lulc_years(summaries):
+    """100% stacked bars: one bar per LULC year, segments = classes."""
+    years = [s for s in summaries if s["available"] and s["composition"]]
+    classes = []
+    for s in years:
+        for r in s["composition"]:
+            if r["LULC"] not in classes:
+                classes.append(r["LULC"])
+    fig = go.Figure()
+    for cls in classes:
+        vals = [next((r["Percent of field"] for r in s["composition"] if r["LULC"] == cls), 0)
+                for s in years]
+        fig.add_trace(go.Bar(
+            name=cls, y=[str(s["year"]) for s in years], x=vals, orientation="h",
+            marker_color=LULC_COLORS.get(cls, "#95a5a6"),
+            text=[f"{v:.0f}%" if v >= 8 else "" for v in vals], textposition="inside",
+            hovertemplate=f"{cls}: %{{x:.1f}}% of field<extra>%{{y}}</extra>",
+        ))
+    fig.update_layout(barmode="stack")
+    fig.update_xaxes(range=[0, 100], title="% of field", gridcolor="#eef3f1")
+    fig.update_yaxes(title=None, autorange="reversed")
+    return _layout(fig, 230, legend=dict(orientation="h", y=-0.35, font=dict(size=11)),
+                   margin=dict(l=10, r=10, t=10, b=10))
 
 
 def chart_score_distribution(scores, best):
@@ -1429,20 +1669,25 @@ def add_field(m, field, fill=0.18, name="Farmer field"):
     ).add_to(m)
 
 
-def add_lulc_context(m, field_utm, buffer_m=250):
-    sub = local_subset(lulc_2022_utm, field_utm.buffer(buffer_m))
-    if sub is None or "LULC_2022" not in sub.columns:
+def add_lulc_context(m, field_utm, year, buffer_m=250, show=False):
+    src = LULC_SOURCES.get(year)
+    if src is None:
         return
-    g = sub[["LULC_2022", "geometry"]].copy()
-    g["geometry"] = g.geometry.intersection(field_utm.buffer(buffer_m))
-    g["cls"] = g["LULC_2022"].apply(canonical_lulc_name)
-    g = g[~g.geometry.is_empty].to_crs("EPSG:4326")
+    col = src["column"]
+    area = field_utm.buffer(buffer_m)
+    sub = local_subset(src["gdf"], area)
+    if sub is None:
+        return
+    g = sub[[col, "geometry"]].copy()
+    g["geometry"] = g.geometry.intersection(area)
+    g["cls"] = g[col].apply(canonical_lulc_name)
+    g = g[~g.geometry.is_empty][["cls", "geometry"]].to_crs("EPSG:4326")
     folium.GeoJson(
-        g[["cls", "geometry"]].__geo_interface__, name="🌾 LULC 2022 (context)", show=False,
+        g.__geo_interface__, name=f"🌾 LULC {year}", show=show,
         style_function=lambda f: {"color": "#ffffff", "weight": 0.6,
                                   "fillColor": LULC_COLORS.get(f["properties"]["cls"], "#95a5a6"),
                                   "fillOpacity": 0.55},
-        tooltip=folium.GeoJsonTooltip(fields=["cls"], aliases=["LULC 2022:"]),
+        tooltip=folium.GeoJsonTooltip(fields=["cls"], aliases=[f"LULC {year}:"]),
     ).add_to(m)
 
 
@@ -1530,13 +1775,17 @@ def build_html_report(a):
         row("Village / locality", a["village"] or "Not entered"),
         row("Field area", f"{a['field_area']:.3f} ha"),
         row("Observed land use", a["current_lulc"]),
-        row("Mapped 2022 LULC", a["mapped_lulc"]),
+        row("Mapped LULC 2015 → 2022", f"{a['lulc_2015']} → {a['lulc_2022']}"),
+        row("LULC reconciliation", a["lulc_note"]),
         row("Candidate location (lat, lon)", f"{site['latitude']:.6f}, {site['longitude']:.6f}"),
         row("Elevation / slope", f"{site['elevation']:.1f} m / {site['slope']:.2f}°"),
         row("TWI", f"{site['twi']:.2f}"),
     ])
     rows_hydro = "".join([
         row("Annual rainfall", fmt(a["rainfall"], "{:,.0f} mm")),
+        row("Runoff land-use correction",
+            (f"Applied: × {a['correction']['factor']:.2f} (CN {a['cn']:.1f} → {a['correction']['cn_adj']:.1f})"
+             if a["correction"]["applied"] else "Not applied")),
         row("Mean annual runoff", fmt(a["mean_runoff"], "{:,.0f} mm")),
         row("75% dependable runoff", fmt(a["dependable_runoff"], "{:,.0f} mm")),
         row("Dependable water from field", fmt(a["dependable_volume"], "{:,.0f} m³/yr")),
@@ -1636,6 +1885,11 @@ with st.sidebar:
         pond_rotation = st.slider("Footprint rotation on map (°)", -90, 90, 0, 5,
                                   help="Align the indicative footprint with the contour direction.")
 
+    correct_runoff = st.toggle(
+        "Correct runoff for confirmed land use", value=True,
+        help="Shifts the mapped CN to the confirmed field land use (e.g. crop land mapped as "
+             "scrub) and rescales mean and dependable runoff accordingly.")
+
     with st.expander("Cost rates (enter local SoR)", expanded=False):
         excavation_rate = st.number_input("Excavation rate (₹ per m³)", 0.0, 5000.0, 200.0, 10.0)
         liner_rate = st.number_input("Liner supply & laying (₹ per m²)", 0.0, 2000.0, 120.0, 5.0)
@@ -1660,6 +1914,9 @@ with st.sidebar:
             dot = "#5dff9c" if ok else "#ff6b6b"
             st.markdown(f"<div style='font-size:12px'><span class='sb-dot' style='background:{dot}'></span>{name}</div>",
                         unsafe_allow_html=True)
+        for _yr in (2015, 2022):
+            _src = LULC_SOURCES.get(_yr, {}).get("source", "not found")
+            st.caption(f"LULC {_yr}: {_src}")
 
     st.markdown("---")
     if st.button("🔄 Start new assessment", use_container_width=True):
@@ -1815,6 +2072,9 @@ with map_col:
         add_streams(field_map, show=True,
                     near_geom_utm=to_utm_geometry(field).buffer(1500) if field else None)
     if field:
+        _fu = to_utm_geometry(field)
+        for _yr in (2015, 2022):
+            add_lulc_context(field_map, _fu, _yr, buffer_m=150)
         add_field(field_map, field, fill=0.22)
         b = shape(field).bounds
         field_map.fit_bounds([[b[1], b[0]], [b[3], b[2]]], padding=(30, 30))
@@ -1864,70 +2124,104 @@ field = st.session_state["field_geometry"]
 
 
 # ============================================================
-# 22. LAND-USE VERIFICATION
+# 22. LAND-USE VERIFICATION (LULC 2015 + 2022)
 # ============================================================
 
 mapped_lulc = "Unknown"
+lulc15 = _empty_lulc(2015)
+lulc22 = _empty_lulc(2022)
+recon = None
+
+LEVEL_CSS = {"low": "v-high", "mod": "v-good", "high": "v-marg", "unk": "v-poor"}
 
 if field:
-    lulc = mapped_lulc_summary(field)
-    mapped_lulc = lulc["dominant"]
+    lulc15 = mapped_lulc_summary(field, 2015)
+    lulc22 = mapped_lulc_summary(field, 2022)
+    recon = reconcile_lulc(field, lulc15, lulc22)
+    mapped_lulc = lulc22["dominant"] if lulc22["available"] else lulc15["dominant"]
 
     section("🌾", "Land-use verification",
-            "2022 GIS land-use evidence vs. the farmer's current field observation")
+            "LULC 2015 and 2022 compared, reconciled, and confirmed against the field observation")
 
-    l1, l2, l3 = st.columns([1.1, 1.1, 1], gap="medium")
+    l1, l2 = st.columns([1, 1.45], gap="medium")
 
     with l1:
-        if st.session_state["current_lulc"] in LAND_USE_OPTIONS:
-            default_index = LAND_USE_OPTIONS.index(st.session_state["current_lulc"])
-        elif mapped_lulc in LAND_USE_OPTIONS:
-            default_index = LAND_USE_OPTIONS.index(mapped_lulc)
-        else:
-            default_index = 0
+        st.markdown(
+            f"""<div class="verdict {LEVEL_CSS[recon['level']]}">
+            <div class="k">2015 → 2022 LAND-USE EVIDENCE</div>
+            <div class="v" style="font-size:22px">{html.escape(recon['status'])}</div>
+            <div class="s">{html.escape(recon['note'])}</div>
+            <ul><li>Agricultural share 2015: {recon['agri_15']:.0f}% · 2022: {recon['agri_22']:.0f}%</li>
+            <li>Agricultural in at least one year: {recon['agri_any']:.0f}% of field</li></ul>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+        suggested = recon["suggested"]
+        default_index = LAND_USE_OPTIONS.index(suggested) if suggested in LAND_USE_OPTIONS else 0
+        # Keyed per field, so a new boundary starts again from the suggested class
+        field_key = hashlib.md5(json.dumps(field, sort_keys=True).encode()).hexdigest()[:10]
         current_lulc = st.selectbox(
-            "Current observed field land use", LAND_USE_OPTIONS, index=default_index,
-            help="The field observation is authoritative for farm-level planning.",
+            "Confirmed field land use (used for planning)", LAND_USE_OPTIONS, index=default_index,
+            key=f"lulc_select_{field_key}",
+            help="Pre-selected from LULC 2015 + 2022. Change it if the field visit shows otherwise — "
+                 "the confirmed class drives the runoff correction and suitability.",
         )
         st.session_state["current_lulc"] = current_lulc
 
-        agreement = current_lulc == mapped_lulc
-        status = "GIS & FIELD AGREE" if agreement else "FIELD-VERIFIED (GIS DIFFERS)"
-        st.markdown(
-            f"""<div class="verdict {'v-high' if agreement else 'v-marg'}" style="margin-top:8px">
-            <div class="k">ACTIVE PLANNING LAND USE</div>
-            <div class="v">{html.escape(current_lulc)}</div>
-            <div class="s">{status}</div></div>""",
-            unsafe_allow_html=True,
-        )
+        if suggested and current_lulc != suggested:
+            st.caption(f"✏️ Overriding the GIS suggestion ({suggested}) with a field observation.")
         if current_lulc in RESTRICTED_LULC:
             st.error(f"'{current_lulc}' is normally excluded from farm-pond siting. "
                      "The analysis will still run but the site will be flagged.")
 
     with l2:
+        def _year_cell(s):
+            if not s["available"]:
+                return "<b>Not available</b>"
+            return (f"<b>{html.escape(s['dominant'])}</b>"
+                    f"<span style='margin-top:3px'>core share {s['confidence']:.0f}% · "
+                    f"coverage {s['coverage']:.0f}%</span>")
+
         st.markdown(
-            f"""<div class="gp-card"><div class="gp-card-title">🗺 GIS land-use evidence (2022)</div>
+            f"""<div class="gp-card"><div class="gp-card-title">🗺 Mapped land use inside the field</div>
             <div class="kv">
-              <div><span>Dominant mapped class</span><b>{html.escape(mapped_lulc)}</b></div>
-              <div><span>Dominant class share (core)</span><b>{lulc['confidence']:.1f}%</b></div>
-              <div><span>GIS coverage of field</span><b>{lulc['coverage']:.1f}%</b></div>
-              <div><span>Classification</span><b style="font-size:12px">{html.escape(lulc['classification'])}</b></div>
+              <div><span>LULC 2015</span>{_year_cell(lulc15)}</div>
+              <div><span>LULC 2022</span>{_year_cell(lulc22)}</div>
             </div></div>""",
             unsafe_allow_html=True,
         )
-        if lulc["composition"]:
-            with st.expander("LULC composition table"):
-                st.dataframe(pd.DataFrame(lulc["composition"]), use_container_width=True, hide_index=True)
-
-    with l3:
-        if HAS_PLOTLY and lulc["composition"]:
-            st.markdown('<div class="gp-card"><div class="gp-card-title">🍩 Composition inside field</div>',
-                        unsafe_allow_html=True)
-            st.plotly_chart(chart_lulc_donut(lulc["composition"]), use_container_width=True,
+        if HAS_PLOTLY and (lulc15["composition"] or lulc22["composition"]):
+            st.plotly_chart(chart_lulc_years([lulc15, lulc22]), use_container_width=True,
                             config={"displayModeBar": False})
-            st.markdown("</div>", unsafe_allow_html=True)
-        elif not lulc["composition"]:
-            st.info("No mapped LULC polygons intersect this field.")
+        elif not (lulc15["composition"] or lulc22["composition"]):
+            st.info("No mapped LULC polygons intersect this field in either year.")
+
+        rows = {}
+        for s in (lulc15, lulc22):
+            for r in s["composition"]:
+                rows.setdefault(r["LULC"], {"LULC": r["LULC"], "2015 (%)": 0.0, "2022 (%)": 0.0})
+                rows[r["LULC"]][f"{s['year']} (%)"] = r["Percent of field"]
+        if rows:
+            with st.expander("Composition table (2015 vs 2022)"):
+                df = pd.DataFrame(rows.values())
+                df["Change (pts)"] = (df["2022 (%)"] - df["2015 (%)"]).round(1)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+        if 2015 not in LULC_SOURCES:
+            st.warning("LULC 2015 layer not found in data/cache — only 2022 is used. "
+                       "See Layer status in the sidebar.")
+
+    # ---- runoff consequence of the confirmed land use -------------------
+    _mix = lulc22["composition"] or lulc15["composition"]
+    _cn_tab_map = table_cn_for_composition(_mix)
+    _cn_tab_obs = CN_BY_LULC.get(current_lulc)
+    if correct_runoff and _cn_tab_map is not None and _cn_tab_obs is not None \
+            and abs(_cn_tab_obs - _cn_tab_map) >= 0.5:
+        direction = "higher" if _cn_tab_obs > _cn_tab_map else "lower"
+        st.info(f"💧 The CN / runoff rasters reflect the mapped land use (table CN ≈ {_cn_tab_map:.0f}). "
+                f"For **{current_lulc}** (table CN {_cn_tab_obs}) runoff will be corrected "
+                f"({direction}) when you run the analysis. Toggle this in the sidebar.")
+
 
 
 # ============================================================
@@ -1962,6 +2256,19 @@ if field:
             dependable_runoff = raster_mean(DEPENDABLE_RUNOFF_RASTER, field)
             cn = raster_mean(CN_RASTER, field)
             runoff_coefficient = raster_mean(RUNOFF_COEFFICIENT_RASTER, field)
+
+            # Land-use correction: mapped CN/runoff -> confirmed field land use
+            mapped_mean_runoff, mapped_dependable_runoff = mean_runoff, dependable_runoff
+            correction = runoff_lulc_correction(
+                cn, runoff_coefficient, lulc22["composition"] or lulc15["composition"],
+                st.session_state["current_lulc"],
+            )
+            if correct_runoff and correction["applied"]:
+                mean_runoff = mean_runoff * correction["factor"]
+                dependable_runoff = dependable_runoff * correction["factor"]
+            else:
+                correction["applied"] = False
+
             mean_volume = mean_runoff * field_area * 10
             dependable_volume = dependable_runoff * field_area * 10
             if not np.isfinite(dependable_volume):
@@ -2021,6 +2328,13 @@ if field:
                 "farmer": farmer_name, "village": village, "field": field,
                 "field_area": field_area,
                 "current_lulc": st.session_state["current_lulc"], "mapped_lulc": mapped_lulc,
+                "lulc_2015": lulc15["dominant"] if lulc15["available"] else "Not available",
+                "lulc_2022": lulc22["dominant"] if lulc22["available"] else "Not available",
+                "lulc_status": recon["status"] if recon else "—",
+                "lulc_note": recon["note"] if recon else "",
+                "correction": correction,
+                "mapped_mean_runoff": mapped_mean_runoff,
+                "mapped_dependable_runoff": mapped_dependable_runoff,
                 "rainfall": rainfall, "mean_runoff": mean_runoff,
                 "dependable_runoff": dependable_runoff, "mean_volume": mean_volume,
                 "dependable_volume": dependable_volume, "cn": cn,
@@ -2132,7 +2446,8 @@ if assessment and field:
                 mercator_project=True, zindex=3,
             ).add_to(result_map)
 
-            add_lulc_context(result_map, field_utm)
+            for _yr in (2015, 2022):
+                add_lulc_context(result_map, field_utm, _yr)
             add_geomorph_context(result_map, field_utm)
             add_streams(result_map, show=True, near_geom_utm=field_utm.buffer(1000))
             add_shear_context(result_map, field_utm)
@@ -2275,13 +2590,22 @@ if assessment and field:
                 <div><span>Mean annual runoff</span><b>{fmt(a['mean_runoff'], '{:,.0f} mm')}</b></div>
                 <div><span>75% dependable runoff</span><b>{fmt(a['dependable_runoff'], '{:,.0f} mm')}</b></div>
                 <div><span>Dependable water</span><b>{fmt(a['dependable_volume'], '{:,.0f} m³/yr')}</b></div>
-                <div><span>Curve Number (AMC II)</span><b>{fmt(a['cn'], '{:.1f}')}</b></div>
-                <div><span>Runoff coefficient</span><b>{fmt(a['runoff_coefficient'], '{:.3f}')}</b></div>
+                <div><span>Curve Number — mapped → used</span><b>{fmt(a['cn'], '{:.1f}')} → {fmt(a['correction']['cn_adj'] if a['correction']['applied'] else a['cn'], '{:.1f}')}</b></div>
+                <div><span>Runoff coefficient — mapped → used</span><b>{fmt(a['runoff_coefficient'], '{:.3f}')} → {fmt(a['correction']['c_adj'] if a['correction']['applied'] else a['runoff_coefficient'], '{:.3f}')}</b></div>
                 <div><span>Storage / dependable</span><b>{fmt(pond['target_storage'] / a['dependable_volume'] * 100 if a['dependable_volume'] else np.nan, '{:.0f}%')}</b></div>
                 <div><span>Fills per season (est.)</span><b>{fmt(a['dependable_volume'] / pond['target_storage'] if pond['target_storage'] else np.nan, '{:.1f}×')}</b></div>
                 </div></div>""",
                 unsafe_allow_html=True,
             )
+            corr = a["correction"]
+            if corr["applied"]:
+                st.success(
+                    f"**Land-use correction applied** — confirmed land use **{a['current_lulc']}** "
+                    f"(mapped: 2015 {a['lulc_2015']}, 2022 {a['lulc_2022']}). {corr['note']} "
+                    f"Dependable runoff {a['mapped_dependable_runoff']:,.0f} → {a['dependable_runoff']:,.0f} mm "
+                    f"(calibrated event depth ≈ {corr['event_p']:.0f} mm).")
+            elif corr.get("note"):
+                st.caption(f"Land-use correction not applied: {corr['note']}")
             st.info("Rainfall keeps the information content of its source dataset; resampling does not "
                     "create new 30-m rainfall observations. Runoff is from the field itself — any upslope "
                     "catchment contribution would add to it and should be checked in the field.")
@@ -2386,7 +2710,11 @@ if assessment and field:
             "DSS": f"GeoPond-DSS v{APP_VERSION}", "Timestamp": a["timestamp"],
             "Farmer": a["farmer"], "Village": a["village"],
             "Field_Area_ha": a["field_area"],
-            "Current_Land_Use": a["current_lulc"], "Mapped_2022_LULC": a["mapped_lulc"],
+            "Current_Land_Use": a["current_lulc"], "LULC_2015": a["lulc_2015"], "LULC_2022": a["lulc_2022"],
+            "LULC_Change": a["lulc_status"],
+            "Runoff_Correction_Factor": a["correction"]["factor"] if a["correction"]["applied"] else 1.0,
+            "CN_Used": a["correction"]["cn_adj"] if a["correction"]["applied"] else a["cn"],
+            "Mapped_Dependable_Runoff_mm": a["mapped_dependable_runoff"],
             "Rainfall_mm_year": a["rainfall"], "Mean_Runoff_mm": a["mean_runoff"],
             "Dependable_Runoff_mm": a["dependable_runoff"],
             "Dependable_Water_m3_year": a["dependable_volume"],
@@ -2473,7 +2801,7 @@ if assessment and field:
                 "- Terrain: `03_Slope`, `05_Elevation`, `10_TWI`, `flow_accumulation`\n"
                 "- Hydrology: `04_Rainfall`, `CN_II`, `mean_runoff_mm`, `dependable_runoff_mm`, `runoff_coefficient`\n"
                 "- Geology: Soil 1:50k, Geomorphology, Lithology, Shear zones, `08_LineamentDensity`\n"
-                "- LULC: `LULC_2022` attribute of the 2021/22 1:10k layer\n"
+                + "".join(f"- LULC {y}: `{LULC_SOURCES[y]['source']}`\n" for y in sorted(LULC_SOURCES)) +
                 "- Analysis CRS: EPSG:32646 (WGS 84 / UTM 46N)"
             )
 

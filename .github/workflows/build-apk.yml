@@ -27,16 +27,22 @@ jobs:
       APP_URL: ${{ inputs.app_url }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # The GitHub Ubuntu runner already has the Android SDK (ANDROID_HOME); just accept licences.
+      - name: Check Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          SDKM=$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | sort | tail -n1)
+          echo "sdkmanager: $SDKM"
+          yes | "$SDKM" --licenses > /dev/null || true
+          ls "$ANDROID_HOME/platforms" | tail -n5
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -60,11 +66,11 @@ jobs:
           URL_ARG=""
           if [ -n "$APP_URL" ]; then URL_ARG="-PappUrl=$APP_URL"; fi
           if [ "$HAS_KEYSTORE" = "true" ]; then
-            gradle --no-daemon assembleRelease $URL_ARG
+            gradle --no-daemon --stacktrace assembleRelease $URL_ARG
             APK=$(ls app/build/outputs/apk/release/*.apk | head -n1)
           else
             echo "::warning::No signing key configured - building a DEBUG APK. Each build gets a new debug key, so users must uninstall the old version before installing a new one. Add the ANDROID_KEYSTORE_* secrets for updatable builds."
-            gradle --no-daemon assembleDebug $URL_ARG
+            gradle --no-daemon --stacktrace assembleDebug $URL_ARG
             APK=$(ls app/build/outputs/apk/debug/*.apk | head -n1)
           fi
           mkdir -p ../dist

@@ -87,7 +87,7 @@ ICAR_LOGO = ASSETS_DIR / "icar_logo.png"
 WORKING_CRS = "EPSG:32646"
 MAP_CENTER = [25.88, 91.88]
 MAP_ZOOM = 12
-APP_VERSION = "2.0"
+APP_VERSION = "2.2"
 
 # --- Rasters -------------------------------------------------
 SLOPE_RASTER = CACHE_DIR / "03_Slope.tif"
@@ -1359,7 +1359,81 @@ def design_farm_pond(available_water_m3, field_area_ha_value, storage_fraction,
     result["occupied_percent"] = result["footprint"] / field_area_m2 * 100 if field_area_m2 else 0
     # Solver floor (0.5 m bottom breadth) can exceed a near-zero runoff target
     result["insufficient_runoff"] = requested_storage < 50.0
+    result["structure"] = "permanent"
+    result["units"] = 1
+    result["unit_volume"] = result["volume"]
+    result["lined"] = None  # decided by the liner rule at costing time
     return result
+
+
+JALKUND_MAX_AUTO_UNITS = 10  # household-scale structure; larger needs → permanent pond
+
+
+def design_jalkund(available_water_m3, field_area_ha_value, storage_fraction, maximum_land_fraction,
+                   top_length, top_breadth, depth, side_slope, freeboard, units="Auto",
+                   anchor_width=0.5, spacing_factor=1.5):
+    """
+    Jalkund (ICAR NEH micro rainwater-harvesting tank): small excavated pit fully lined with
+    plastic film. Standard 5 m × 4 m × 1.5 m ≈ 30,000 L per unit. Liner area includes
+    bottom, sloping sides and an anchor strip around the rim.
+    """
+    bottom_length = top_length - 2 * side_slope * depth
+    bottom_breadth = top_breadth - 2 * side_slope * depth
+    if bottom_length <= 0.2 or bottom_breadth <= 0.2:
+        raise ValueError("Jalkund side slope is too flat for the chosen top size and depth.")
+    water_depth = max(depth - freeboard, 0.1)
+    bottom_area = bottom_length * bottom_breadth
+    water_top_length = bottom_length + 2 * side_slope * water_depth
+    water_top_breadth = bottom_breadth + 2 * side_slope * water_depth
+    water_spread = water_top_length * water_top_breadth
+    unit_volume = frustum_volume(water_depth, bottom_area, water_spread)
+    unit_footprint = top_length * top_breadth
+    unit_excavation = frustum_volume(depth, bottom_area, unit_footprint)
+
+    slant = math.sqrt(depth ** 2 + (side_slope * depth) ** 2)
+    side_area = 2 * ((bottom_length + top_length) / 2 * slant) + 2 * ((bottom_breadth + top_breadth) / 2 * slant)
+    anchor_area = 2 * (top_length + top_breadth) * anchor_width + 4 * anchor_width ** 2
+    unit_liner = bottom_area + side_area + anchor_area
+
+    field_area_m2 = field_area_ha_value * 10000
+    requested_storage = max(0.0, available_water_m3 * storage_fraction)
+    max_units_by_land = max(1, int((field_area_m2 * maximum_land_fraction) // (unit_footprint * spacing_factor)))
+    if units == "Auto":
+        need = max(1, math.ceil(requested_storage / unit_volume)) if unit_volume > 0 else 1
+        n = min(need, max_units_by_land, JALKUND_MAX_AUTO_UNITS)
+        if n == need:
+            limiting = "Runoff yield"
+        elif n == JALKUND_MAX_AUTO_UNITS:
+            limiting = f"Practical maximum ({JALKUND_MAX_AUTO_UNITS} units)"
+        else:
+            limiting = "Land (max. footprint)"
+    else:
+        n = int(units)
+        limiting = "Farmer's choice (number of units)"
+
+    total_volume = n * unit_volume
+    return {
+        "structure": "jalkund", "units": n, "unit_volume": float(unit_volume),
+        "bottom_length": float(bottom_length), "bottom_breadth": float(bottom_breadth),
+        "water_top_length": float(water_top_length), "water_top_breadth": float(water_top_breadth),
+        "top_length": float(top_length), "top_breadth": float(top_breadth),
+        "water_depth": float(water_depth), "freeboard": float(freeboard),
+        "side_slope": float(side_slope), "excavation_depth": float(depth),
+        "volume": float(total_volume), "water_spread_area": float(n * water_spread),
+        "excavation_volume": float(n * unit_excavation), "footprint": float(n * unit_footprint),
+        "unit_footprint": float(unit_footprint),
+        "lining_area": float(n * unit_liner), "liner_purchase_area": float(n * unit_liner * 1.05),
+        "unit_liner_area": float(unit_liner),
+        "requested_storage": float(requested_storage), "target_storage": float(total_volume),
+        "max_storage_by_land": float(max_units_by_land * unit_volume),
+        "max_units_by_land": int(max_units_by_land),
+        "limiting_factor": limiting,
+        "occupied_percent": n * unit_footprint / field_area_m2 * 100 if field_area_m2 else 0.0,
+        "units_needed": int(math.ceil(requested_storage / unit_volume)) if unit_volume > 0 else 0,
+        "insufficient_runoff": available_water_m3 < unit_volume,
+        "exceeds_runoff": total_volume > available_water_m3 > 0,
+        "lined": True,
+    }
 
 
 # ============================================================
@@ -1450,7 +1524,7 @@ def build_screening(soil_texture, landform, lithology, shear_distance, lineament
 # ============================================================
 
 def suitability_index(slope, twi, dependable_runoff_mm, seepage_risk, terrain_level,
-                      shear_distance, current_lulc):
+                      shear_distance, current_lulc, lined=False):
     """Indicative 0–100 index combining terrain, hydrology and geology screening."""
     sub = {
         "Slope": float(np.interp(slope, [0, 3, 8, 15, 24], [100, 100, 70, 35, 0])),
@@ -1463,6 +1537,10 @@ def suitability_index(slope, twi, dependable_runoff_mm, seepage_risk, terrain_le
         "Shear-zone distance": 70.0 if shear_distance is None else float(
             np.interp(shear_distance, [0, 50, 100, 250, 500], [0, 20, 50, 85, 100])),
     }
+    notes = []
+    if lined:
+        sub["Seepage"] = max(sub["Seepage"], 90.0)
+        notes.append("Fully lined structure: seepage risk is mitigated by the plastic liner.")
     index = sum(SUITABILITY_WEIGHTS[k] * v for k, v in sub.items())
 
     flags = []
@@ -1482,12 +1560,13 @@ def suitability_index(slope, twi, dependable_runoff_mm, seepage_risk, terrain_le
     else:
         label, css, short = "Not Recommended", "v-poor", "N"
     return {"index": float(index), "label": label, "css": css, "class": short,
-            "components": sub, "flags": flags}
+            "components": sub, "flags": flags, "notes": notes}
 
 
 def cost_estimate(pond, excavation_rate, liner_rate, seepage_risk, include_liner, misc_percent):
     excavation_cost = pond["excavation_volume"] * excavation_rate
-    liner_needed = include_liner == "Always" or (include_liner == "If seepage ≥ MODERATE" and seepage_risk in {"MODERATE", "HIGH"})
+    liner_needed = (pond.get("lined") is True or include_liner == "Always"
+                    or (include_liner == "If seepage ≥ MODERATE" and seepage_risk in {"MODERATE", "HIGH"}))
     liner_cost = pond["liner_purchase_area"] * liner_rate if liner_needed else 0.0
     subtotal = excavation_cost + liner_cost
     misc = subtotal * misc_percent / 100
@@ -1533,7 +1612,7 @@ def chart_gauge(value, label):
             "threshold": {"line": {"color": "#d64045", "width": 3}, "value": 45},
         },
     ))
-    return _layout(fig, 260, margin=dict(l=20, r=20, t=50, b=0))
+    return _layout(fig, 270, margin=dict(l=40, r=45, t=55, b=10))
 
 
 def chart_radar(components):
@@ -1546,7 +1625,10 @@ def chart_radar(components):
     ))
     fig.update_polars(radialaxis=dict(range=[0, 100], showline=False, gridcolor="#dbe7e3"),
                       angularaxis=dict(gridcolor="#dbe7e3"), bgcolor="rgba(0,0,0,0)")
-    return _layout(fig, 320, showlegend=False, title="Criteria profile (0–100)")
+    fig.update_polars(domain=dict(x=[0.12, 0.88], y=[0.05, 0.88]),
+                      angularaxis=dict(tickfont=dict(size=11)))
+    return _layout(fig, 340, showlegend=False, title="Criteria profile (0–100)",
+                   margin=dict(l=70, r=70, t=50, b=30))
 
 
 def chart_water_balance(a, pond):
@@ -1783,20 +1865,26 @@ def utm_to_wgs_geom(geom):
 # ============================================================
 
 def build_geojson_export(a):
-    site, pond = a["site"], a["pond"]
-    pond_wgs = utm_to_wgs_geom(pond_polygon_utm(site["x_utm"], site["y_utm"], pond["top_length"],
-                                                pond["top_breadth"], a.get("pond_rotation", 0)))
+    pond = a["pond"]
+    is_jk = pond.get("structure") == "jalkund"
     features = [
         {"type": "Feature", "geometry": a["field"],
          "properties": {"layer": "farmer_field", "farmer": a["farmer"], "village": a["village"],
                         "area_ha": round(a["field_area"], 4), "land_use": a["current_lulc"]}},
-        {"type": "Feature", "geometry": as_plain_geojson(pond_wgs),
-         "properties": {"layer": "indicative_pond_footprint",
-                        "storage_m3": round(pond["target_storage"], 1),
-                        "top_length_m": round(pond["top_length"], 2),
-                        "top_breadth_m": round(pond["top_breadth"], 2),
-                        "depth_m": round(pond["excavation_depth"], 2)}},
     ]
+    n_draw = pond["units"] if is_jk else 1
+    for i, c in enumerate(a["alternatives"][:n_draw]):
+        poly = utm_to_wgs_geom(pond_polygon_utm(c["x_utm"], c["y_utm"], pond["top_length"],
+                                                pond["top_breadth"], a.get("pond_rotation", 0)))
+        features.append({
+            "type": "Feature", "geometry": as_plain_geojson(poly),
+            "properties": {"layer": "jalkund_footprint" if is_jk else "indicative_pond_footprint",
+                           "structure": a["structure"], "unit": i + 1,
+                           "storage_m3": round(pond["unit_volume"] if is_jk else pond["target_storage"], 1),
+                           "top_length_m": round(pond["top_length"], 2),
+                           "top_breadth_m": round(pond["top_breadth"], 2),
+                           "depth_m": round(pond["excavation_depth"], 2)},
+        })
     for c in a["alternatives"]:
         features.append({
             "type": "Feature",
@@ -1819,7 +1907,8 @@ def build_html_report(a):
         row("Farmer", a["farmer"] or "Not entered"),
         row("Village / locality", a["village"] or "Not entered"),
         row("Field area", f"{a['field_area']:.3f} ha"),
-        row("Observed land use", a["current_lulc"]),
+        row("Land use (farmer-declared)", a["current_lulc"]),
+        row("Structure type", a["structure"] + (f" × {pond['units']} unit(s)" if pond.get("structure") == "jalkund" else "")),
         row("Mapped LULC 2015 → 2022", f"{a['lulc_2015']} → {a['lulc_2022']}"),
         row("LULC reconciliation", a["lulc_note"]),
         row("Candidate location (lat, lon)", f"{site['latitude']:.6f}, {site['longitude']:.6f}"),
@@ -1838,14 +1927,17 @@ def build_html_report(a):
         row("Runoff coefficient", fmt(a["runoff_coefficient"], "{:.3f}")),
     ])
     rows_pond = "".join([
-        row("Storage target", f"{pond['target_storage']:,.0f} m³ (limited by {pond['limiting_factor'].lower()})"),
+        row("Storage", f"{pond['target_storage']:,.0f} m³ (sizing basis: {pond['limiting_factor'].lower()})"),
+        *([row("Capacity per Jalkund", f"{pond['unit_volume']:,.1f} m³ ({pond['unit_volume'] * 1000:,.0f} L)")]
+          if pond.get("structure") == "jalkund" else []),
         row("Bottom L × B", f"{pond['bottom_length']:.1f} × {pond['bottom_breadth']:.1f} m"),
         row("Top L × B", f"{pond['top_length']:.1f} × {pond['top_breadth']:.1f} m"),
         row("Water depth + freeboard", f"{pond['water_depth']:.2f} + {pond['freeboard']:.2f} m"),
         row("Side slope", f"{pond['side_slope']:.2f}H : 1V"),
         row("Footprint / field share", f"{pond['footprint']:,.0f} m² / {pond['occupied_percent']:.1f}%"),
         row("Earthwork (excavation)", f"{pond['excavation_volume']:,.0f} m³"),
-        row("Lining area (+10% procurement)", f"{pond['lining_area']:,.0f} m² ({pond['liner_purchase_area']:,.0f} m²)"),
+        row(f"Plastic liner ({a['rates']['liner_micron']} micron)",
+            f"{pond['lining_area']:,.0f} m² net, {pond['liner_purchase_area']:,.0f} m² to procure"),
     ])
     rows_geo = "".join([
         row("Soil texture", a["soil_info"]["texture"]),
@@ -1887,7 +1979,7 @@ th,td{{padding:6px 8px;border-bottom:1px solid #edf3f1}} .note{{font-size:11.5px
 {f'<ul style="font-size:13px;color:#9b1c22">{flags}</ul>' if flags else ''}</div>
 <h2>Field & candidate site</h2><table>{rows_site}</table>
 <h2>Hydrology</h2><table>{rows_hydro}</table>
-<h2>Preliminary pond design</h2><table>{rows_pond}</table>
+<h2>Preliminary structure design</h2><table>{rows_pond}</table>
 <h2>Geology & seepage screening</h2><table>{rows_geo}</table>
 <h2>Suitability index components</h2><table>{rows_idx}</table>
 <h2>Indicative cost (user rates)</h2><table>{rows_cost}</table>
@@ -1919,33 +2011,29 @@ with st.sidebar:
     farmer_name = st.text_input("Farmer name", key="farmer_name")
     village = st.text_input("Village / locality", key="village")
 
-    st.markdown("##### ⚙️ Design assumptions")
-    with st.expander("Pond planning parameters", expanded=False):
-        storage_fraction_percent = st.slider("Storage as % of 75% dependable runoff", 10, 60, 30, 5)
-        maximum_land_percent = st.slider("Max. field area occupied by pond (%)", 5, 20, 10, 1)
-        water_depth = st.slider("Planning water depth (m)", 1.5, 3.5, 2.5, 0.25)
-        freeboard = st.slider("Freeboard (m)", 0.30, 0.75, 0.50, 0.05)
-        side_slope = st.slider("Side slope (H : 1V)", 1.0, 2.5, 1.5, 0.25)
-        length_breadth_ratio = st.slider("Bottom length : breadth ratio", 1.0, 2.0, 1.5, 0.1)
-        pond_rotation = st.slider("Footprint rotation on map (°)", -90, 90, 0, 5,
-                                  help="Align the indicative footprint with the contour direction.")
+    st.markdown("##### 💰 Cost rates")
+    with st.expander("Rates (enter local SoR)", expanded=False):
+        excavation_rate = st.number_input("Excavation (₹ per m³)", 0.0, 5000.0, 200.0, 10.0)
+        liner_micron = st.number_input("Plastic liner thickness (micron)", 100, 2000, 500, 50,
+                                       help="500 micron LDPE / HDPE agri-film is the default.")
+        liner_rate = st.number_input(f"Plastic liner, {liner_micron} micron (₹ per m²)",
+                                     0.0, 3000.0, 350.0, 10.0)
+        include_liner = st.selectbox("Liner for permanent pond",
+                                     ["If seepage ≥ MODERATE", "Always", "Never"],
+                                     help="A Jalkund is always lined.")
+        misc_percent = st.slider("Contingency / inlet-outlet / misc. (%)", 0, 30, 10, 1)
+        st.caption("Excavation rate is a placeholder — replace it with the district Schedule of Rates.")
 
     correct_runoff = st.toggle(
-        "Correct runoff for confirmed land use", value=True,
-        help="Shifts the mapped CN to the confirmed field land use (e.g. crop land mapped as "
+        "Correct runoff for farmer-declared land use", value=True,
+        help="Shifts the mapped CN to the land use declared by the farmer (e.g. crop land mapped as "
              "scrub) and rescales mean and dependable runoff accordingly.")
-
-    with st.expander("Cost rates (enter local SoR)", expanded=False):
-        excavation_rate = st.number_input("Excavation rate (₹ per m³)", 0.0, 5000.0, 200.0, 10.0)
-        liner_rate = st.number_input("Liner supply & laying (₹ per m²)", 0.0, 2000.0, 120.0, 5.0)
-        include_liner = st.selectbox("Include liner cost", ["If seepage ≥ MODERATE", "Always", "Never"])
-        misc_percent = st.slider("Contingency / inlet-outlet / misc. (%)", 0, 30, 10, 1)
-        st.caption("Default rates are placeholders. Replace them with the current district "
-                   "Schedule of Rates before using the estimate.")
 
     st.markdown("##### 🗺 Map options")
     show_streams = st.toggle("Show drainage network", value=True)
     show_minimap = st.toggle("Show overview minimap", value=True)
+    pond_rotation = st.slider("Footprint rotation on map (°)", -90, 90, 0, 5,
+                              help="Align the indicative footprint with the contour direction.")
 
     st.markdown("##### 🧭 GIS database")
     loaded = sum(LAYER_STATUS.values())
@@ -2016,8 +2104,8 @@ def render_stepper():
     has_run = assessment is not None
     steps = [
         ("Map field", "GPS / draw / upload", has_field),
-        ("Verify land use", "GIS vs. observed", has_lulc),
-        ("Set assumptions", "design & cost", has_lulc),
+        ("Farmer land use", "declared by farmer", has_lulc),
+        ("Choose structure", "pond or Jalkund", has_lulc),
         ("Run analysis", "MCDA + hydrology", has_run),
         ("Report", "download & share", has_run),
     ]
@@ -2169,103 +2257,141 @@ field = st.session_state["field_geometry"]
 
 
 # ============================================================
-# 22. LAND-USE VERIFICATION (LULC 2015 + 2022)
+# 22. FARMER INPUTS — land use + structure type & design
+#     (GIS LULC 2015 / 2022 kept as reference only)
 # ============================================================
 
 mapped_lulc = "Unknown"
 lulc15 = _empty_lulc(2015)
 lulc22 = _empty_lulc(2022)
 recon = None
+current_lulc = None
+structure_type = "Permanent farm pond"
 
 LEVEL_CSS = {"low": "v-high", "mod": "v-good", "high": "v-marg", "unk": "v-poor"}
+STRUCTURES = {
+    "Permanent farm pond": "Earthen excavated pond sized from runoff; lined only if seepage requires.",
+    "Jalkund (plastic-lined)": "ICAR NEH micro-tank (≈ 5 × 4 × 1.5 m, 30,000 L), fully lined with plastic film.",
+}
 
 if field:
     lulc15 = mapped_lulc_summary(field, 2015)
     lulc22 = mapped_lulc_summary(field, 2022)
     recon = reconcile_lulc(field, lulc15, lulc22)
     mapped_lulc = lulc22["dominant"] if lulc22["available"] else lulc15["dominant"]
+    field_key = hashlib.md5(json.dumps(field, sort_keys=True).encode()).hexdigest()[:10]
 
-    section("🌾", "Land-use verification",
-            "LULC 2015 and 2022 compared, reconciled, and confirmed against the field observation")
+    section("👨‍🌾", "Farmer inputs",
+            "Land use as declared by the farmer, and the type of water-harvesting structure")
 
-    l1, l2 = st.columns([1, 1.45], gap="medium")
+    fi1, fi2 = st.columns([1, 1.25], gap="medium")
 
-    with l1:
-        st.markdown(
-            f"""<div class="verdict {LEVEL_CSS[recon['level']]}">
-            <div class="k">2015 → 2022 LAND-USE EVIDENCE</div>
-            <div class="v" style="font-size:22px">{html.escape(recon['status'])}</div>
-            <div class="s">{html.escape(recon['note'])}</div>
-            <ul><li>Agricultural share 2015: {recon['agri_15']:.0f}% · 2022: {recon['agri_22']:.0f}%</li>
-            <li>Agricultural in at least one year: {recon['agri_any']:.0f}% of field</li></ul>
-            </div>""",
-            unsafe_allow_html=True,
-        )
-
-        suggested = recon["suggested"]
-        default_index = LAND_USE_OPTIONS.index(suggested) if suggested in LAND_USE_OPTIONS else 0
-        # Keyed per field, so a new boundary starts again from the suggested class
-        field_key = hashlib.md5(json.dumps(field, sort_keys=True).encode()).hexdigest()[:10]
+    # ---- land use (farmer-declared) ------------------------------------
+    with fi1:
+        st.markdown('<div class="gp-card"><div class="gp-card-title">🌾 Field land use (farmer-declared)</div>',
+                    unsafe_allow_html=True)
         current_lulc = st.selectbox(
-            "Confirmed field land use (used for planning)", LAND_USE_OPTIONS, index=default_index,
+            "What is this field used for now?", LAND_USE_OPTIONS, index=None,
+            placeholder="Select the land use reported by the farmer…",
             key=f"lulc_select_{field_key}",
-            help="Pre-selected from LULC 2015 + 2022. Change it if the field visit shows otherwise — "
-                 "the confirmed class drives the runoff correction and suitability.",
+            help="The farmer's declaration is used for planning and for the runoff correction. "
+                 "GIS maps are shown below only as reference.",
         )
         st.session_state["current_lulc"] = current_lulc
+        if current_lulc is None:
+            st.caption("⬆️ Required before running the analysis.")
+        else:
+            mapped_now = [y for y in (recon["d15"], recon["d22"]) if y != "Unknown"]
+            if mapped_now and current_lulc not in mapped_now:
+                st.caption(f"ℹ️ GIS maps show {' / '.join(dict.fromkeys(mapped_now))} — "
+                           f"the farmer's declaration ({current_lulc}) will be used.")
+            if current_lulc in RESTRICTED_LULC:
+                st.error(f"'{current_lulc}' is normally excluded from pond siting. "
+                         "The analysis will still run but the site will be flagged.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        if suggested and current_lulc != suggested:
-            st.caption(f"✏️ Overriding the GIS suggestion ({suggested}) with a field observation.")
-        if current_lulc in RESTRICTED_LULC:
-            st.error(f"'{current_lulc}' is normally excluded from farm-pond siting. "
-                     "The analysis will still run but the site will be flagged.")
+        with st.expander("🗺 GIS land-use reference (LULC 2015 & 2022)", expanded=False):
+            st.markdown(
+                f"""<div class="kv">
+                <div><span>LULC 2015</span><b>{html.escape(recon['d15'])}</b></div>
+                <div><span>LULC 2022</span><b>{html.escape(recon['d22'])}</b></div>
+                <div><span>Change</span><b style="font-size:12px">{html.escape(recon['status'])}</b></div>
+                <div><span>Agricultural in either year</span><b>{recon['agri_any']:.0f}% of field</b></div>
+                </div><div style="font-size:12px;color:#5c716b;margin-top:8px">{html.escape(recon['note'])}</div>""",
+                unsafe_allow_html=True,
+            )
+            if HAS_PLOTLY and (lulc15["composition"] or lulc22["composition"]):
+                st.plotly_chart(chart_lulc_years([lulc15, lulc22]), use_container_width=True,
+                                config={"displayModeBar": False})
+            rows = {}
+            for s_ in (lulc15, lulc22):
+                for r_ in s_["composition"]:
+                    rows.setdefault(r_["LULC"], {"LULC": r_["LULC"], "2015 (%)": 0.0, "2022 (%)": 0.0})
+                    rows[r_["LULC"]][f"{s_['year']} (%)"] = r_["Percent of field"]
+            if rows:
+                df_ = pd.DataFrame(rows.values())
+                df_["Change (pts)"] = (df_["2022 (%)"] - df_["2015 (%)"]).round(1)
+                st.dataframe(df_, use_container_width=True, hide_index=True)
 
-    with l2:
-        def _year_cell(s):
-            if not s["available"]:
-                return "<b>Not available</b>"
-            return (f"<b>{html.escape(s['dominant'])}</b>"
-                    f"<span style='margin-top:3px'>core share {s['confidence']:.0f}% · "
-                    f"coverage {s['coverage']:.0f}%</span>")
+    # ---- structure type & design ---------------------------------------
+    with fi2:
+        st.markdown('<div class="gp-card"><div class="gp-card-title">🏗 Water-harvesting structure</div>',
+                    unsafe_allow_html=True)
+        structure_type = st.radio("Structure type", list(STRUCTURES), horizontal=True,
+                                  key="structure_type", captions=list(STRUCTURES.values()))
+        storage_fraction_percent = st.slider("Storage as % of 75% dependable runoff", 10, 60, 30, 5,
+                                             key="storage_fraction_percent")
+        maximum_land_percent = st.slider("Max. field area occupied (%)", 1, 20, 10, 1,
+                                         key="maximum_land_percent")
 
-        st.markdown(
-            f"""<div class="gp-card"><div class="gp-card-title">🗺 Mapped land use inside the field</div>
-            <div class="kv">
-              <div><span>LULC 2015</span>{_year_cell(lulc15)}</div>
-              <div><span>LULC 2022</span>{_year_cell(lulc22)}</div>
-            </div></div>""",
-            unsafe_allow_html=True,
-        )
-        if HAS_PLOTLY and (lulc15["composition"] or lulc22["composition"]):
-            st.plotly_chart(chart_lulc_years([lulc15, lulc22]), use_container_width=True,
-                            config={"displayModeBar": False})
-        elif not (lulc15["composition"] or lulc22["composition"]):
-            st.info("No mapped LULC polygons intersect this field in either year.")
+        if structure_type.startswith("Permanent"):
+            d1_, d2_ = st.columns(2)
+            water_depth = d1_.slider("Water depth (m)", 1.5, 3.5, 2.5, 0.25, key="pp_depth")
+            freeboard = d2_.slider("Freeboard (m)", 0.30, 0.75, 0.50, 0.05, key="pp_fb")
+            side_slope = d1_.slider("Side slope (H : 1V)", 1.0, 2.5, 1.5, 0.25, key="pp_ss")
+            length_breadth_ratio = d2_.slider("Bottom L : B ratio", 1.0, 2.0, 1.5, 0.1, key="pp_lb")
+            jk = None
+        else:
+            d1_, d2_, d3_ = st.columns(3)
+            jk_l = d1_.number_input("Top length (m)", 2.0, 15.0, 5.0, 0.5, key="jk_l")
+            jk_b = d2_.number_input("Top breadth (m)", 2.0, 15.0, 4.0, 0.5, key="jk_b")
+            jk_d = d3_.number_input("Depth (m)", 0.8, 3.0, 1.5, 0.1, key="jk_d")
+            jk_ss = d1_.number_input("Side slope (H : 1V)", 0.0, 1.0, 0.0, 0.1, key="jk_ss",
+                                     help="0 = vertical walls (standard Jalkund).")
+            jk_fb = d2_.number_input("Freeboard (m)", 0.0, 0.5, 0.0, 0.05, key="jk_fb")
+            jk_units = d3_.selectbox("Number of units", ["Auto"] + [str(i) for i in range(1, 21)],
+                                     key="jk_units", help="Auto = enough units for the storage target.")
+            water_depth, freeboard, side_slope, length_breadth_ratio = jk_d - jk_fb, jk_fb, jk_ss, jk_l / jk_b
+            jk = {"top_length": jk_l, "top_breadth": jk_b, "depth": jk_d, "side_slope": jk_ss,
+                  "freeboard": jk_fb, "units": jk_units}
+            try:
+                _prev = design_jalkund(1e9, 1.0, 1.0, 1.0, jk_l, jk_b, jk_d, jk_ss, jk_fb, units="1")
+                st.markdown(
+                    f"""<div class="kv kv4" style="margin-top:4px">
+                    <div><span>Per unit</span><b>{_prev['unit_volume']:,.1f} m³</b></div>
+                    <div><span>Litres / unit</span><b>{_prev['unit_volume'] * 1000:,.0f}</b></div>
+                    <div><span>Liner / unit</span><b>{_prev['unit_liner_area']:,.1f} m²</b></div>
+                    <div><span>Liner cost / unit</span><b>₹ {_prev['unit_liner_area'] * 1.05 * liner_rate:,.0f}</b></div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+                st.caption(f"Liner: {liner_micron} micron plastic at ₹{liner_rate:,.0f}/m² "
+                           "(includes 0.5 m anchor strip + 5% wastage). Change rates in the sidebar.")
+            except ValueError as exc:
+                st.error(str(exc))
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        rows = {}
-        for s in (lulc15, lulc22):
-            for r in s["composition"]:
-                rows.setdefault(r["LULC"], {"LULC": r["LULC"], "2015 (%)": 0.0, "2022 (%)": 0.0})
-                rows[r["LULC"]][f"{s['year']} (%)"] = r["Percent of field"]
-        if rows:
-            with st.expander("Composition table (2015 vs 2022)"):
-                df = pd.DataFrame(rows.values())
-                df["Change (pts)"] = (df["2022 (%)"] - df["2015 (%)"]).round(1)
-                st.dataframe(df, use_container_width=True, hide_index=True)
-        if 2015 not in LULC_SOURCES:
-            st.warning("LULC 2015 layer not found in data/cache — only 2022 is used. "
-                       "See Layer status in the sidebar.")
-
-    # ---- runoff consequence of the confirmed land use -------------------
-    _mix = lulc22["composition"] or lulc15["composition"]
-    _cn_tab_map = table_cn_for_composition(_mix)
-    _cn_tab_obs = CN_BY_LULC.get(current_lulc)
-    if correct_runoff and _cn_tab_map is not None and _cn_tab_obs is not None \
-            and abs(_cn_tab_obs - _cn_tab_map) >= 0.5:
-        direction = "higher" if _cn_tab_obs > _cn_tab_map else "lower"
-        st.info(f"💧 The CN / runoff rasters reflect the mapped land use (table CN ≈ {_cn_tab_map:.0f}). "
-                f"For **{current_lulc}** (table CN {_cn_tab_obs}) runoff will be corrected "
-                f"({direction}) when you run the analysis. Toggle this in the sidebar.")
+    # ---- runoff consequence of the declared land use ---------------------
+    if current_lulc is not None:
+        _mix = lulc22["composition"] or lulc15["composition"]
+        _cn_tab_map = table_cn_for_composition(_mix)
+        _cn_tab_obs = CN_BY_LULC.get(current_lulc)
+        if correct_runoff and _cn_tab_map is not None and _cn_tab_obs is not None \
+                and abs(_cn_tab_obs - _cn_tab_map) >= 0.5:
+            direction = "higher" if _cn_tab_obs > _cn_tab_map else "lower"
+            st.info(f"💧 The CN / runoff rasters reflect the mapped land use (table CN ≈ {_cn_tab_map:.0f}). "
+                    f"For **{current_lulc}** (table CN {_cn_tab_obs}) runoff will be corrected "
+                    f"({direction}) when you run the analysis. Toggle this in the sidebar.")
 
 
 
@@ -2277,20 +2403,25 @@ if field:
     section("🧮", "Run GeoPond-DSS analysis",
             "Hydrology · terrain MCDA · exclusion buffers · geology & seepage · design · cost")
 
+    is_jalkund = structure_type.startswith("Jalkund")
     r1, r2 = st.columns([3, 1])
     with r2:
         st.markdown(
             f"""<div class="gp-card" style="padding:10px 12px"><div class="kv">
-            <div><span>Storage share</span><b>{storage_fraction_percent}%</b></div>
-            <div><span>Max land</span><b>{maximum_land_percent}%</b></div>
+            <div><span>Structure</span><b style="font-size:12.5px">{'Jalkund' if is_jalkund else 'Permanent pond'}</b></div>
+            <div><span>Land use</span><b style="font-size:12.5px">{html.escape(current_lulc or '— not set —')}</b></div>
             <div><span>Depth + FB</span><b>{water_depth:.2f}+{freeboard:.2f} m</b></div>
-            <div><span>Side slope</span><b>{side_slope:.2f}:1</b></div></div></div>""",
+            <div><span>Liner</span><b>{liner_micron} µ · ₹{liner_rate:,.0f}/m²</b></div></div></div>""",
             unsafe_allow_html=True,
         )
     with r1:
-        run = st.button("💧  FIND BEST GIS-SCREENED POND SITE & PRELIMINARY DESIGN",
-                        type="primary", use_container_width=True)
-        st.caption("Change assumptions in the sidebar (⚙️). Re-run after any change to update results.")
+        run = st.button(
+            f"💧  FIND BEST SITE & DESIGN {'JALKUND' if is_jalkund else 'PERMANENT POND'}",
+            type="primary", use_container_width=True, disabled=current_lulc is None,
+        )
+        st.caption("Select the farmer-declared land use above to enable the analysis."
+                   if current_lulc is None else
+                   "Re-run after changing any input to update the results.")
 
     if run:
         progress = st.progress(0, text="Reading hydrological rasters…")
@@ -2319,11 +2450,18 @@ if field:
             if not np.isfinite(dependable_volume):
                 dependable_volume = 0.0
 
-            progress.progress(25, text="Sizing the preliminary pond…")
-            pond = design_farm_pond(
-                dependable_volume, field_area, storage_fraction_percent / 100,
-                maximum_land_percent / 100, water_depth, freeboard, side_slope, length_breadth_ratio,
-            )
+            progress.progress(25, text="Sizing the structure…")
+            if is_jalkund:
+                pond = design_jalkund(
+                    dependable_volume, field_area, storage_fraction_percent / 100,
+                    maximum_land_percent / 100, jk["top_length"], jk["top_breadth"], jk["depth"],
+                    jk["side_slope"], jk["freeboard"], units=jk["units"],
+                )
+            else:
+                pond = design_farm_pond(
+                    dependable_volume, field_area, storage_fraction_percent / 100,
+                    maximum_land_percent / 100, water_depth, freeboard, side_slope, length_breadth_ratio,
+                )
             half_diagonal = 0.5 * math.hypot(pond["top_length"], pond["top_breadth"])
 
             progress.progress(45, text="Running multi-criteria site suitability…")
@@ -2363,11 +2501,12 @@ if field:
                                         lineament_density, site["slope"])
 
             progress.progress(88, text="Scoring suitability and estimating cost…")
-            si = suitability_index(site["slope"], site["twi"], dependable_runoff,
-                                   screening["seepage_risk"], screening["terrain_constraint"],
-                                   shear_distance, st.session_state["current_lulc"])
             cost = cost_estimate(pond, excavation_rate, liner_rate, screening["seepage_risk"],
                                  include_liner, misc_percent)
+            si = suitability_index(site["slope"], site["twi"], dependable_runoff,
+                                   screening["seepage_risk"], screening["terrain_constraint"],
+                                   shear_distance, st.session_state["current_lulc"],
+                                   lined=cost["liner_included"])
 
             st.session_state["assessment"] = {
                 "farmer": farmer_name, "village": village, "field": field,
@@ -2392,7 +2531,11 @@ if field:
                 "soil_info": soil_info, "geom_info": geom_info, "lith_info": lith_info,
                 "shear_distance": shear_distance, "lineament_density": lineament_density,
                 "screening": screening, "suitability": si, "cost": cost,
+                "structure": "Jalkund (plastic-lined)" if is_jalkund else "Permanent farm pond",
+                "rates": {"excavation": excavation_rate, "liner": liner_rate,
+                          "liner_micron": liner_micron, "misc_percent": misc_percent},
                 "params": {
+                    "structure": "jalkund" if is_jalkund else "permanent",
                     "storage_fraction_percent": storage_fraction_percent,
                     "maximum_land_percent": maximum_land_percent,
                     "water_depth": water_depth, "freeboard": freeboard,
@@ -2422,10 +2565,20 @@ if assessment and field:
     section("📊", "Assessment dashboard",
             f"Generated {a['timestamp'].replace('T', ' ')} · results are GIS screening, not survey")
 
+    is_jk = pond.get("structure") == "jalkund"
     if pond.get("insufficient_runoff"):
-        st.error("Dependable runoff from this field is too small (< 50 m³ storage) for a viable pond. "
-                 "The dimensions shown are the minimum the solver produces — check for upslope catchment "
-                 "inflow or consider a larger contributing area.")
+        st.error(("Dependable runoff from this field is less than one Jalkund's capacity. "
+                  "Add roof / upslope catchment inflow or use a smaller unit.") if is_jk else
+                 ("Dependable runoff from this field is too small (< 50 m³ storage) for a viable pond. "
+                  "The dimensions shown are the minimum the solver produces — check for upslope catchment "
+                  "inflow or consider a larger contributing area."))
+    elif is_jk and pond["limiting_factor"].startswith("Practical"):
+        st.info(f"Runoff could fill about {pond['units_needed']} Jalkunds ({pond['requested_storage']:,.0f} m³). "
+                f"The design is capped at {pond['units']} units; for storage at this scale a permanent "
+                "farm pond is usually more economical — switch the structure type to compare.")
+    elif pond.get("exceeds_runoff"):
+        st.warning(f"{pond['units']} Jalkund unit(s) hold {pond['target_storage']:,.0f} m³, more than the "
+                   f"75% dependable runoff ({a['dependable_volume']:,.0f} m³). Some units may not fill in a dry year.")
 
     if a.get("relaxed_clearance"):
         st.warning("Boundary clearance had to be relaxed to 5 m to find a candidate. "
@@ -2438,8 +2591,14 @@ if assessment and field:
                    f"{screening['terrain_constraint'].lower()}")
     reasons.append(f"Seepage screening: {screening['seepage_risk'].lower()} "
                    f"({screening['soil_screen'].lower()})")
-    reasons.append(f"Storage {pond['target_storage']:,.0f} m³ — limited by "
-                   f"{pond['limiting_factor'].lower()}")
+    if is_jk:
+        reasons.insert(0, f"Jalkund × {pond['units']} ({pond['unit_volume'] * 1000:,.0f} L each) — "
+                          f"{pond['target_storage']:,.0f} m³ total, {a['rates']['liner_micron']} µ plastic liner")
+    else:
+        reasons.append(f"Permanent pond storage {pond['target_storage']:,.0f} m³ — limited by "
+                       f"{pond['limiting_factor'].lower()}")
+    reasons.append(f"Farmer-declared land use: {a['current_lulc']}")
+    reasons.extend(si.get("notes", []))
     reasons.extend(si["flags"])
     with v1:
         st.markdown(
@@ -2467,7 +2626,7 @@ if assessment and field:
     k[0].metric("Field area", f"{a['field_area']:.3f} ha")
     k[1].metric("Dependable water", f"{a['dependable_volume']:,.0f} m³")
     k[2].metric("Storage target", f"{pond['target_storage']:,.0f} m³")
-    k[3].metric("Pond footprint", f"{pond['footprint']:,.0f} m²", f"{pond['occupied_percent']:.1f}% of field",
+    k[3].metric("Jalkund footprint" if is_jk else "Pond footprint", f"{pond['footprint']:,.0f} m²", f"{pond['occupied_percent']:.1f}% of field",
                 delta_color="off")
     k[4].metric("Seepage risk", screening["seepage_risk"])
     k[5].metric("Indicative cost", f"₹ {cost['total'] / 1e5:,.2f} L", fmt(cost["per_m3"], "₹ {:,.0f}/m³"),
@@ -2507,15 +2666,28 @@ if assessment and field:
                                                                      "dashArray": "4 4", "fillOpacity": 0}
                                ).add_to(result_map)
 
-            pond_poly = utm_to_wgs_geom(pond_polygon_utm(site["x_utm"], site["y_utm"], pond["top_length"],
-                                                         pond["top_breadth"], a.get("pond_rotation", 0)))
-            folium.GeoJson(
-                as_plain_geojson(pond_poly), name="📐 Indicative pond footprint",
-                style_function=lambda f: {"color": "#FF1744", "weight": 3, "fillColor": "#2196F3",
-                                          "fillOpacity": 0.45},
-                tooltip=f"Pond {pond['top_length']:.1f} × {pond['top_breadth']:.1f} m · "
-                        f"{pond['target_storage']:,.0f} m³",
-            ).add_to(result_map)
+            # Permanent pond: one footprint. Jalkund: one footprint per unit, placed on the
+            # ranked candidate cells (≥ 15 m apart); extra units beyond the candidates are listed only.
+            n_draw = pond["units"] if is_jk else 1
+            fp_group = folium.FeatureGroup(
+                name="📐 Indicative Jalkund footprints" if is_jk else "📐 Indicative pond footprint", show=True)
+            for i, c in enumerate(a["alternatives"][:n_draw]):
+                poly = utm_to_wgs_geom(pond_polygon_utm(c["x_utm"], c["y_utm"], pond["top_length"],
+                                                        pond["top_breadth"], a.get("pond_rotation", 0)))
+                tip = (f"Jalkund {i + 1}: {pond['top_length']:.1f} × {pond['top_breadth']:.1f} × "
+                       f"{pond['excavation_depth']:.1f} m · {pond['unit_volume'] * 1000:,.0f} L" if is_jk else
+                       f"Pond {pond['top_length']:.1f} × {pond['top_breadth']:.1f} m · "
+                       f"{pond['target_storage']:,.0f} m³")
+                folium.GeoJson(
+                    as_plain_geojson(poly),
+                    style_function=lambda f: {"color": "#FF1744", "weight": 3, "fillColor": "#2196F3",
+                                              "fillOpacity": 0.5},
+                    tooltip=tip,
+                ).add_to(fp_group)
+            fp_group.add_to(result_map)
+            if is_jk and pond["units"] > len(a["alternatives"]):
+                st.caption(f"{pond['units'] - len(a['alternatives'])} more unit(s) not drawn — place them "
+                           "near the drawn ones following the contour.")
 
             alt_group = folium.FeatureGroup(name="🔢 Alternative candidates", show=True)
             for c in a["alternatives"][1:]:
@@ -2663,35 +2835,53 @@ if assessment and field:
     with tabs[3]:
         d1, d2 = st.columns([1, 1.35], gap="medium")
         with d1:
-            st.markdown(
-                f"""<div class="gp-card"><div class="gp-card-title">📐 Preliminary dimensions</div>
-                <div class="kv">
+            if is_jk:
+                head = f"📐 Jalkund design — {pond['units']} unit(s)"
+                extra = f"""
+                <div><span>Number of units</span><b>{pond['units']}</b></div>
+                <div><span>Capacity per unit</span><b>{pond['unit_volume']:,.1f} m³ ({pond['unit_volume'] * 1000:,.0f} L)</b></div>
+                <div><span>Total capacity</span><b>{pond['target_storage']:,.1f} m³</b></div>
+                <div><span>Runoff-based need</span><b>{pond['requested_storage']:,.0f} m³</b></div>
+                <div><span>Liner per unit</span><b>{pond['unit_liner_area']:,.1f} m²</b></div>
+                <div><span>Liner total (+5%)</span><b>{pond['liner_purchase_area']:,.0f} m² · {a['rates']['liner_micron']} µ</b></div>"""
+                per = " (each)"
+            else:
+                head = "📐 Permanent pond — preliminary dimensions"
+                extra = f"""
                 <div><span>Storage target</span><b>{pond['target_storage']:,.0f} m³</b></div>
-                <div><span>Design volume</span><b>{pond['volume']:,.0f} m³</b></div>
-                <div><span>Bottom L × B</span><b>{pond['bottom_length']:.1f} × {pond['bottom_breadth']:.1f} m</b></div>
-                <div><span>Top L × B</span><b>{pond['top_length']:.1f} × {pond['top_breadth']:.1f} m</b></div>
+                <div><span>Design volume</span><b>{pond['volume']:,.0f} m³</b></div>"""
+                per = ""
+            st.markdown(
+                f"""<div class="gp-card"><div class="gp-card-title">{head}</div>
+                <div class="kv">{extra}
+                <div><span>Bottom L × B{per}</span><b>{pond['bottom_length']:.1f} × {pond['bottom_breadth']:.1f} m</b></div>
+                <div><span>Top L × B{per}</span><b>{pond['top_length']:.1f} × {pond['top_breadth']:.1f} m</b></div>
                 <div><span>Water depth</span><b>{pond['water_depth']:.2f} m</b></div>
                 <div><span>Freeboard</span><b>{pond['freeboard']:.2f} m</b></div>
                 <div><span>Excavation depth</span><b>{pond['excavation_depth']:.2f} m</b></div>
                 <div><span>Side slope</span><b>{pond['side_slope']:.2f}H : 1V</b></div>
-                <div><span>Water-spread area</span><b>{pond['water_spread_area']:,.0f} m²</b></div>
-                <div><span>Footprint</span><b>{pond['footprint']:,.0f} m² ({pond['occupied_percent']:.1f}%)</b></div>
-                <div><span>Earthwork</span><b>{pond['excavation_volume']:,.0f} m³</b></div>
-                <div><span>Limiting factor</span><b style="font-size:12px">{pond['limiting_factor']}</b></div>
+                <div><span>Water-spread area (total)</span><b>{pond['water_spread_area']:,.0f} m²</b></div>
+                <div><span>Footprint (total)</span><b>{pond['footprint']:,.0f} m² ({pond['occupied_percent']:.1f}%)</b></div>
+                <div><span>Earthwork (total)</span><b>{pond['excavation_volume']:,.0f} m³</b></div>
+                <div><span>Sizing basis</span><b style="font-size:12px">{pond['limiting_factor']}</b></div>
                 </div></div>""",
                 unsafe_allow_html=True,
             )
             if pond["limiting_factor"].startswith("Land"):
                 st.caption(f"Runoff could fill {pond['requested_storage']:,.0f} m³, but the land limit "
                            f"({a['params']['maximum_land_percent']}% of field) caps storage at "
-                           f"{pond['max_storage_by_land']:,.0f} m³. Raise the limit or depth in the sidebar to "
-                           "store more.")
+                           f"{pond['max_storage_by_land']:,.0f} m³. Raise the limit or depth to store more.")
         with d2:
             if HAS_PLOTLY:
                 st.plotly_chart(chart_cross_section(pond), use_container_width=True,
                                 config={"displayModeBar": False})
-            st.caption("Earthwork from excavation can be used to form bunds around the pond. "
-                       "Provide inlet silt trap and a protected overflow/spillway.")
+            if is_jk:
+                st.caption("Jalkund: line bottom and walls with the plastic film, anchor it in a trench / "
+                           "under soil along the rim, cover the floor with a thin soil or mud layer to protect "
+                           "the film, and roof with bamboo / thatch to cut evaporation and debris.")
+            else:
+                st.caption("Earthwork from excavation can be used to form bunds around the pond. "
+                           "Provide inlet silt trap and a protected overflow/spillway.")
 
     # ---- 5. geology ----------------------------------------------------
     with tabs[4]:
@@ -2732,19 +2922,21 @@ if assessment and field:
             st.markdown(
                 f"""<div class="gp-card"><div class="gp-card-title">💰 Indicative cost estimate</div>
                 <div class="kv">
-                <div><span>Earthwork</span><b>{pond['excavation_volume']:,.0f} m³ × ₹{excavation_rate:,.0f}</b></div>
+                <div><span>Structure</span><b style="font-size:12.5px">{a['structure']}{f" × {pond['units']}" if is_jk else ""}</b></div>
+                <div><span>{"Cost per unit" if is_jk else "Storage"}</span><b>{f"₹ {cost['total'] / pond['units']:,.0f}" if is_jk else f"{pond['target_storage']:,.0f} m³"}</b></div>
+                <div><span>Earthwork</span><b>{pond['excavation_volume']:,.0f} m³ × ₹{a['rates']['excavation']:,.0f}</b></div>
                 <div><span>Excavation cost</span><b>₹ {cost['excavation']:,.0f}</b></div>
-                <div><span>Liner</span><b>{pond['liner_purchase_area']:,.0f} m² × ₹{liner_rate:,.0f}</b></div>
+                <div><span>Liner ({a['rates']['liner_micron']} µ plastic)</span><b>{pond['liner_purchase_area']:,.0f} m² × ₹{a['rates']['liner']:,.0f}</b></div>
                 <div><span>Liner cost</span><b>₹ {cost['liner']:,.0f}{'' if cost['liner_included'] else ' (excl.)'}</b></div>
-                <div><span>Contingency / misc. ({misc_percent}%)</span><b>₹ {cost['misc']:,.0f}</b></div>
+                <div><span>Contingency / misc. ({a['rates']['misc_percent']}%)</span><b>₹ {cost['misc']:,.0f}</b></div>
                 <div><span>Total</span><b>₹ {cost['total']:,.0f}</b></div>
                 <div><span>Cost per m³ stored</span><b>{fmt(cost['per_m3'], '₹ {:,.0f}')}</b></div>
                 <div><span>Cost per ha of field</span><b>₹ {cost['total'] / a['field_area']:,.0f}</b></div>
                 </div></div>""",
                 unsafe_allow_html=True,
             )
-            st.caption("Rates come from the sidebar and are applied to the dimensions computed at run time. "
-                       "Update rates and re-run for a fresh estimate. Not a substitute for a detailed estimate.")
+            st.caption("Rates are those set in the sidebar at run time. Change rates and re-run for a fresh "
+                       "estimate. Not a substitute for a detailed estimate.")
         with c2:
             if HAS_PLOTLY and cost["total"] > 0:
                 st.plotly_chart(chart_cost(cost), use_container_width=True, config={"displayModeBar": False})
@@ -2768,7 +2960,10 @@ if assessment and field:
             "Elevation_m": site["elevation"], "Slope_degree": site["slope"], "TWI": site["twi"],
             "Site_Score_Raw": site["site_score"], "Site_Score_Adjusted": site["adjusted_score"],
             "Suitability_Index": si["index"], "Suitability_Class": si["label"],
-            "Storage_m3": pond["target_storage"], "Storage_Limiting_Factor": pond["limiting_factor"],
+            "Structure_Type": a["structure"], "Units": pond["units"],
+            "Unit_Capacity_m3": pond["unit_volume"],
+            "Storage_m3": pond["target_storage"], "Sizing_Basis": pond["limiting_factor"],
+            "Liner_Micron": a["rates"]["liner_micron"], "Liner_Rate_INR_m2": a["rates"]["liner"],
             "Bottom_Length_m": pond["bottom_length"], "Bottom_Breadth_m": pond["bottom_breadth"],
             "Top_Length_m": pond["top_length"], "Top_Breadth_m": pond["top_breadth"],
             "Water_Depth_m": pond["water_depth"], "Freeboard_m": pond["freeboard"],

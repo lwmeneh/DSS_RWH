@@ -635,16 +635,17 @@ def mapped_lulc_summary(field_geojson):
         dominant = safe_text(grouped_core.iloc[0]["_class"])
         confidence = float(grouped_core.iloc[0]["_core_area"] / core_total * 100.0)
 
-    # Do not force a categorical answer when the GIS layer is mixed or poorly
-    # covering the field. This is especially important for small farm parcels.
+    # IMPORTANT: this is a historical/reference GIS layer, not current parcel truth.
+    # Even a high-overlap polygon can be outdated or locally misregistered at farm scale.
+    # Therefore never promote it to the authoritative current land-use class.
     if coverage < 70.0:
-        classification = "Unverified"
+        classification = "Reference unavailable / incomplete"
     elif confidence >= 70.0:
-        classification = dominant
+        classification = f"Historical GIS reference: {dominant}"
     elif confidence >= 50.0:
-        classification = f"Mixed — mainly {dominant}"
+        classification = f"Historical GIS reference: mixed, mainly {dominant}"
     else:
-        classification = "Mixed / uncertain"
+        classification = "Historical GIS reference: mixed / uncertain"
 
     return {
         "composition": composition,
@@ -1099,60 +1100,66 @@ if field:
     lulc_coverage = lulc_result["coverage"]
 
     st.success(f"✅ Farmer field captured successfully: {area_ha:.3f} ha")
-    c1, c2 = st.columns(2)
-    c1.metric("Field Area", f"{area_ha:.3f} ha")
-    c2.metric("2021 GIS LULC", mapped_lulc)
 
-    c3, c4 = st.columns(2)
-    c3.metric("Dominant mapped class", mapped_lulc_dominant)
-    c4.metric("GIS class confidence", f"{lulc_confidence:.0f}%")
-
-    if lulc_coverage < 95:
-        st.info(
-            f"The detailed LULC layer covers about **{lulc_coverage:.1f}%** of the drawn field. "
-            "The GIS class is therefore treated as supporting information rather than current ground truth."
-        )
-
+    # Current field observation is the authoritative farm-scale class.
     LAND_USE_OPTIONS = [
         "Crop land", "Plantation", "Shifting Cultivation", "Scrub land", "Forest Open",
         "Forest Moderately Dense", "Forest Dense", "Built up", "Waterbody", "River/Stream"
     ]
 
-    # Current farmer/field confirmation has priority.  Only use the mapped
-    # dominant class as the initial suggestion when it is sufficiently clear.
-    if st.session_state.current_lulc in LAND_USE_OPTIONS:
-        default_idx = LAND_USE_OPTIONS.index(st.session_state.current_lulc)
-    elif mapped_lulc_dominant in LAND_USE_OPTIONS and lulc_confidence >= 70 and lulc_coverage >= 70:
-        default_idx = LAND_USE_OPTIONS.index(mapped_lulc_dominant)
-    else:
-        default_idx = 0
+    previous_current = st.session_state.current_lulc
+    default_idx = LAND_USE_OPTIONS.index(previous_current) if previous_current in LAND_USE_OPTIONS else None
 
-    current_lulc = st.selectbox(
-        "🌾 Confirm Current Field Land Use",
+    c1, c2 = st.columns(2)
+    c1.metric("Field Area", f"{area_ha:.3f} ha")
+
+    current_lulc = c2.selectbox(
+        "🌾 Current Observed Field Land Use",
         LAND_USE_OPTIONS,
         index=default_idx,
+        placeholder="Select the land use seen in the field now",
         help=(
-            "The GIS layer is a mapped reference layer and may be outdated or locally misaligned. "
-            "For farm-level planning, confirm what is actually present in the field now."
+            "This is the authoritative land-use class for GeoPond-DSS farm planning. "
+            "Select what is actually present now, based on the farmer/field investigator and satellite view. "
+            "The 2021 GIS LULC is retained only as a historical reference because it can be outdated or misaligned at parcel scale."
         ),
     )
     st.session_state.current_lulc = current_lulc
 
-    if mapped_lulc_dominant != "Unknown" and current_lulc != mapped_lulc_dominant:
+    if current_lulc:
+        st.success(f"Current land use used for GeoPond-DSS planning: **{current_lulc}**")
+    else:
         st.warning(
-            f"The 2021 GIS layer is dominated by **{mapped_lulc_dominant}** "
-            f"({lulc_confidence:.0f}% of the mapped field core), whereas the current field use is "
-            f"confirmed as **{current_lulc}**. GeoPond-DSS uses the **confirmed current land use** "
-            "for farm-pond planning and retains the GIS result only for traceability."
+            "Please confirm the **current observed field land use** before running GeoPond-DSS. "
+            "The historical GIS LULC will not be used as the current farm class."
         )
 
-    if lulc_comp:
-        with st.expander("🗺️ Area-weighted LULC composition inside the drawn field"):
+    # Historical GIS layer is shown separately and never overrides current observation.
+    with st.expander("🗺️ Historical 2021 GIS LULC — reference only", expanded=False):
+        st.write(f"**Mapped reference classification:** {mapped_lulc}")
+        st.write(f"**Dominant mapped class:** {mapped_lulc_dominant}")
+        st.write(f"**Mapped-class share of field core:** {lulc_confidence:.1f}%")
+        st.write(f"**GIS coverage of drawn field:** {lulc_coverage:.1f}%")
+
+        st.info(
+            "This 2021 LULC layer is not treated as present-day parcel ground truth. "
+            "A cultivated field can be mapped as Scrub land or Built up because of temporal change, "
+            "source classification error, mixed pixels/polygons, or local spatial misregistration. "
+            "GeoPond-DSS therefore uses the confirmed current field observation for planning."
+        )
+
+        if lulc_comp:
             st.dataframe(pd.DataFrame(lulc_comp), use_container_width=True, hide_index=True)
             st.caption(
-                "Percentages are calculated from polygon overlap in UTM Zone 46N (metres). "
-                "A small inward field core is used only for deciding the dominant class, reducing edge/sliver effects."
+                "Overlap percentages are calculated in UTM Zone 46N. They describe the historical GIS polygons "
+                "intersecting the drawn field; they do not reclassify the present field condition."
             )
+
+    if current_lulc and mapped_lulc_dominant not in ["Unknown", ""] and current_lulc != mapped_lulc_dominant:
+        st.caption(
+            f"Historical GIS reference = {mapped_lulc_dominant}; current observed land use = {current_lulc}. "
+            "The current observed class is used by the DSS."
+        )
 
 
 # ============================================================
@@ -1179,7 +1186,12 @@ if field:
     st.markdown("---")
     st.header("3️⃣ Run GeoPond-DSS")
 
-    if st.button("💧 FIND BEST GIS-SCREENED POND SITE & PRELIMINARY DESIGN", type="primary", use_container_width=True):
+    if st.button(
+        "💧 FIND BEST GIS-SCREENED POND SITE & PRELIMINARY DESIGN",
+        type="primary",
+        use_container_width=True,
+        disabled=(not st.session_state.current_lulc),
+    ):
         with st.spinner("Analysing water availability, terrain, geology, soil and pond design..."):
             area_ha = field_area_ha(field)
             rainfall = raster_mean(RAINFALL_RASTER, field)
@@ -1273,7 +1285,7 @@ if field:
                 "mapped_lulc_dominant": mapped_lulc_dominant,
                 "lulc_confidence": lulc_confidence,
                 "lulc_coverage": lulc_coverage,
-                "current_lulc": current_lulc,
+                "current_lulc": st.session_state.current_lulc,
                 "rainfall": rainfall,
                 "mean_runoff": mean_runoff,
                 "dependable_runoff": dependable_runoff,

@@ -6814,4 +6814,8 @@ if st.button(
 
     reset_assessment()
 
+<<<<<<< HEAD
     st.rerun()
+=======
+    st.rerun()
+>>>>>>> b9aaff721a59b98f8315461236c4653bf3a2eb44

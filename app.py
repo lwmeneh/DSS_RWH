@@ -740,10 +740,10 @@ def mapped_lulc_summary(field_geojson):
 
 def projected_lulc_2025_reference(field_geojson):
     """
-    Optional secondary GIS reference from the 2025 projected LULC layer.
-    This layer is NOT used as field truth because it is a projection, not a
-    current ground survey. It is used only to help diagnose disagreement
-    between the 2021 map and current observed land use.
+    Primary GIS land-use reference from the 2025 projected LULC layer.
+    This layer is used in preference to the older 2021 map because it is
+    temporally closer to the present planning period. It remains a GIS
+    reference rather than a substitute for field observation.
     """
     if projected_lulc_2025_utm is None or projected_lulc_2025_utm.empty:
         return {"dominant": "Unavailable", "confidence": 0.0, "coverage": 0.0, "composition": []}
@@ -1238,16 +1238,27 @@ if field:
     lulc_coverage = lulc_result["coverage"]
     projected_2025 = projected_lulc_2025_reference(field)
 
+    # Use the 2025 projected layer as the primary GIS reference when available.
+    projected_valid = projected_2025["dominant"] not in ["Unavailable", "No coverage", "Unknown", ""]
+    primary_gis_lulc = projected_2025["dominant"] if projected_valid else mapped_lulc_dominant
+    primary_gis_source = "2025 Projected LULC" if projected_valid else "2021 Historical LULC"
+
     st.success(f"✅ Farmer field captured successfully: {area_ha:.3f} ha")
 
-    # Current field observation is the authoritative farm-scale class.
+    # Current field observation remains authoritative, but the 2025 GIS class
+    # is used as the default suggestion when it is available.
     LAND_USE_OPTIONS = [
         "Crop land", "Plantation", "Shifting Cultivation", "Scrub land", "Forest Open",
         "Forest Moderately Dense", "Forest Dense", "Built up", "Waterbody", "River/Stream"
     ]
 
     previous_current = st.session_state.current_lulc
-    default_idx = LAND_USE_OPTIONS.index(previous_current) if previous_current in LAND_USE_OPTIONS else None
+    if previous_current in LAND_USE_OPTIONS:
+        default_idx = LAND_USE_OPTIONS.index(previous_current)
+    elif primary_gis_lulc in LAND_USE_OPTIONS:
+        default_idx = LAND_USE_OPTIONS.index(primary_gis_lulc)
+    else:
+        default_idx = None
 
     c1, c2 = st.columns(2)
     c1.metric("Field Area", f"{area_ha:.3f} ha")
@@ -1260,7 +1271,7 @@ if field:
         help=(
             "This is the authoritative land-use class for GeoPond-DSS farm planning. "
             "Select what is actually present now, based on the farmer/field investigator and satellite view. "
-            "The 2021 GIS LULC is retained only as a historical reference because it can be outdated or misaligned at parcel scale."
+            "The 2025 projected LULC is used as the primary GIS reference when available; the 2021 LULC is retained only as historical context."
         ),
     )
     st.session_state.current_lulc = current_lulc
@@ -1273,20 +1284,26 @@ if field:
             "The historical GIS LULC will not be used as the current farm class."
         )
 
-    # Optional 2025 projected LULC is a supporting GIS reference, not field truth.
-    if projected_2025["dominant"] not in ["Unavailable", "No coverage", "Unknown", ""]:
-        with st.expander("🛰️ 2025 Projected LULC — supporting reference only", expanded=False):
+    # 2025 projected LULC is the primary GIS reference.
+    if projected_valid:
+        st.info(
+            f"Primary GIS land-use reference (2025 projected LULC): **{projected_2025['dominant']}** "
+            f"({projected_2025['confidence']:.1f}% of mapped field overlap; {projected_2025['coverage']:.1f}% coverage)."
+        )
+        with st.expander("🛰️ 2025 Projected LULC — primary GIS reference", expanded=False):
             st.write(f"**Projected dominant class:** {projected_2025['dominant']}")
             st.write(f"**Projected-class share:** {projected_2025['confidence']:.1f}%")
             st.write(f"**Projected GIS coverage:** {projected_2025['coverage']:.1f}%")
             st.info(
-                "This 2025 layer is a projected/derived GIS product, not a field observation. "
-                "It is used only as supporting evidence when the older 2021 map disagrees with the current field condition."
+                "This 2025 layer is used as the primary GIS reference because it is temporally closer to the current planning period. "
+                "It does not override a verified field observation; the farmer/field investigator can still correct the current class."
             )
             if projected_2025["composition"]:
                 st.dataframe(pd.DataFrame(projected_2025["composition"]), use_container_width=True, hide_index=True)
+    else:
+        st.warning("2025 projected LULC is unavailable for this field; GeoPond-DSS is falling back to the 2021 historical GIS layer as reference only.")
 
-    # Historical GIS layer is shown separately and never overrides current observation.
+    # Historical 2021 GIS layer is shown separately and never overrides current observation.
     with st.expander("🗺️ Historical 2021 GIS LULC — reference only", expanded=False):
         st.write(f"**Mapped reference classification:** {mapped_lulc}")
         st.write(f"**Dominant mapped class:** {mapped_lulc_dominant}")
@@ -1307,15 +1324,21 @@ if field:
                 "intersecting the drawn field; they do not reclassify the present field condition."
             )
 
-    if current_lulc and mapped_lulc_dominant not in ["Unknown", ""] and current_lulc != mapped_lulc_dominant:
-        st.caption(
-            f"Historical 2021 GIS reference = {mapped_lulc_dominant}; current observed land use = {current_lulc}. "
-            "The current observed class is used by the DSS."
-        )
-        if projected_2025["dominant"] == current_lulc:
+    if current_lulc:
+        if projected_valid and projected_2025["dominant"] == current_lulc:
             st.success(
-                f"The optional 2025 projected GIS layer also indicates **{current_lulc}**, supporting the current field observation. "
-                f"The older 2021 class (**{mapped_lulc_dominant}**) is therefore treated as historical/outdated for this parcel."
+                f"Current field observation (**{current_lulc}**) agrees with the primary 2025 GIS reference. "
+                f"The 2021 class (**{mapped_lulc_dominant}**) is retained only as historical context."
+            )
+        elif projected_valid and projected_2025["dominant"] != current_lulc:
+            st.warning(
+                f"Current field observation = **{current_lulc}**, while the primary 2025 GIS reference = **{projected_2025['dominant']}**. "
+                "GeoPond-DSS uses the confirmed field observation for planning and keeps the 2025 class as a GIS reference."
+            )
+        elif mapped_lulc_dominant not in ["Unknown", ""] and current_lulc != mapped_lulc_dominant:
+            st.caption(
+                f"Historical 2021 GIS reference = {mapped_lulc_dominant}; current observed land use = {current_lulc}. "
+                "The current observed class is used by the DSS."
             )
 
 
@@ -1441,6 +1464,10 @@ if field:
                 "mapped_lulc": mapped_lulc,
                 "mapped_lulc_dominant": mapped_lulc_dominant,
                 "projected_2025_lulc": projected_2025.get("dominant", "Unavailable"),
+                "projected_2025_confidence": projected_2025.get("confidence", 0.0),
+                "projected_2025_coverage": projected_2025.get("coverage", 0.0),
+                "primary_gis_lulc": primary_gis_lulc,
+                "primary_gis_lulc_source": primary_gis_source,
                 "lulc_confidence": lulc_confidence,
                 "lulc_coverage": lulc_coverage,
                 "current_lulc": st.session_state.current_lulc,
@@ -1625,11 +1652,13 @@ if assessment:
     with st.expander("🔬 Technical Site Information"):
         st.write("**Farmer:**", assessment["farmer"] or "Not entered")
         st.write("**Village / Locality:**", assessment["village"] or "Not entered")
-        st.write("**Current land use:**", assessment["current_lulc"])
-        st.write("**2021 GIS LULC classification:**", assessment["mapped_lulc"])
-        st.write("**Dominant mapped class:**", assessment.get("mapped_lulc_dominant", "Unknown"))
-        st.write("**GIS class confidence:**", f"{assessment.get('lulc_confidence', 0.0):.1f}%")
-        st.write("**GIS field coverage:**", f"{assessment.get('lulc_coverage', 0.0):.1f}%")
+        st.write("**Current land use used for planning:**", assessment["current_lulc"])
+        st.write("**Primary GIS LULC reference:**", assessment.get("primary_gis_lulc", "Unknown"))
+        st.write("**Primary GIS source:**", assessment.get("primary_gis_lulc_source", "Unknown"))
+        st.write("**2025 projected LULC:**", assessment.get("projected_2025_lulc", "Unavailable"))
+        st.write("**2025 projected-class share:**", f"{assessment.get('projected_2025_confidence', 0.0):.1f}%")
+        st.write("**2025 GIS coverage:**", f"{assessment.get('projected_2025_coverage', 0.0):.1f}%")
+        st.write("**Historical 2021 GIS LULC:**", assessment.get("mapped_lulc_dominant", "Unknown"))
         st.write("**CN-II:**", round(assessment["cn"], 1) if np.isfinite(assessment["cn"]) else "No data")
         st.write("**Runoff coefficient:**", round(assessment["runoff_coefficient"], 3) if np.isfinite(assessment["runoff_coefficient"]) else "No data")
         st.write("**Drainage density at site:**", round(site["drainage_density"], 3))
@@ -1658,11 +1687,14 @@ if assessment:
         "Farmer": assessment["farmer"],
         "Village": assessment["village"],
         "Field_Area_ha": assessment["field_area"],
-        "GIS_LULC_Classification": assessment["mapped_lulc"],
-        "GIS_Dominant_LULC": assessment.get("mapped_lulc_dominant", "Unknown"),
-        "Projected_2025_LULC_Reference": assessment.get("projected_2025_lulc", "Unavailable"),
-        "GIS_LULC_Confidence_percent": assessment.get("lulc_confidence", np.nan),
-        "GIS_LULC_Coverage_percent": assessment.get("lulc_coverage", np.nan),
+        "Primary_GIS_LULC": assessment.get("primary_gis_lulc", "Unknown"),
+        "Primary_GIS_LULC_Source": assessment.get("primary_gis_lulc_source", "Unknown"),
+        "Projected_2025_LULC": assessment.get("projected_2025_lulc", "Unavailable"),
+        "Projected_2025_Class_Share_percent": assessment.get("projected_2025_confidence", np.nan),
+        "Projected_2025_Coverage_percent": assessment.get("projected_2025_coverage", np.nan),
+        "Historical_2021_GIS_LULC": assessment.get("mapped_lulc_dominant", "Unknown"),
+        "Historical_2021_LULC_Confidence_percent": assessment.get("lulc_confidence", np.nan),
+        "Historical_2021_LULC_Coverage_percent": assessment.get("lulc_coverage", np.nan),
         "Confirmed_Current_Land_Use": assessment["current_lulc"],
         "Rainfall_mm_year": assessment["rainfall"],
         "Mean_Runoff_mm": assessment["mean_runoff"],

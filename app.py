@@ -110,6 +110,8 @@ LULC_2022_GPKG = CACHE_DIR / "lulc_2021_10k_clean_utm46.gpkg"
 # LULC 2015: either a column in the 2022 layer, or a separate file in data/cache.
 # Put your exact file name first in this list if it is not detected automatically.
 LULC_2015_FILES = [
+    CACHE_DIR / "RiBhoi_LULC_2015_16_UTM46N.gpkg",      # district subset (lighter)
+    CACHE_DIR / "Meghalaya_LULC_2015_16_UTM46N.gpkg",   # state-wide NRSC 2015-16
     CACHE_DIR / "lulc_2015_10k_clean_utm46.gpkg",
     CACHE_DIR / "lulc_2015_utm46.gpkg",
     CACHE_DIR / "LULC_2015.gpkg",
@@ -117,7 +119,7 @@ LULC_2015_FILES = [
     CACHE_DIR / "LULC_2015.geojson",
 ]
 LULC_2015_COLUMNS = ["LULC_2015", "LULC2015", "LU_2015", "LULC_15", "Class_2015", "LULC15"]
-LULC_GENERIC_COLUMNS = ["LULC", "LULC_CLASS", "Class", "Class_Name", "LU_Class", "Landuse",
+LULC_GENERIC_COLUMNS = ["DESCR_2", "DESCR2", "LULC", "LULC_CLASS", "Class", "Class_Name", "LU_Class", "Landuse",
                         "Land_Use", "LANDUSE", "Description", "Legend", "Level_II", "Level2"]
 PROJECTED_LULC_2025_SHP = CACHE_DIR / "2025_Projected_LULC.shp"
 SOIL_GPKG = CACHE_DIR / "Soil_Meghalaya_50k.gpkg"
@@ -146,6 +148,7 @@ LAND_USE_OPTIONS = [
     "Plantation",
     "Shifting Cultivation",
     "Scrub land",
+    "Barren land",
     "Forest Open",
     "Forest Moderately Dense",
     "Forest Dense",
@@ -160,6 +163,7 @@ LULC_COLORS = {
     "Plantation": "#a3d977",
     "Shifting Cultivation": "#e59866",
     "Scrub land": "#d7bde2",
+    "Barren land": "#b0a8a0",
     "Forest Open": "#58d68d",
     "Forest Moderately Dense": "#28b463",
     "Forest Dense": "#196f3d",
@@ -181,7 +185,7 @@ TRANSITIONAL_LULC = {"Scrub land", "Forest Open", "Fallow land"}
 # to the land use actually observed in the field.
 CN_BY_LULC = {
     "Crop land": 85, "Fallow land": 86, "Plantation": 76, "Shifting Cultivation": 86,
-    "Scrub land": 73, "Forest Open": 77, "Forest Moderately Dense": 73, "Forest Dense": 70,
+    "Scrub land": 73, "Barren land": 88, "Forest Open": 77, "Forest Moderately Dense": 73, "Forest Dense": 70,
     "Built up": 90, "Waterbody": 98, "River/Stream": 98,
 }
 
@@ -500,6 +504,34 @@ def _match_column(columns, preferred):
     return None
 
 
+@st.cache_resource(show_spinner=False)
+def load_vector_utm_clipped(path_string, bounds_utm):
+    """Read only features inside a UTM bounding box (state-wide layers → district)."""
+    try:
+        clip_box = gpd.GeoSeries([box(*bounds_utm)], crs=WORKING_CRS)
+        gdf = gpd.read_file(path_string, bbox=clip_box)  # reprojected to the file CRS by geopandas
+        if gdf.empty or gdf.crs is None:
+            return None
+        try:
+            invalid = ~gdf.geometry.is_valid
+            if invalid.any():
+                gdf.loc[invalid, "geometry"] = gdf.loc[invalid, "geometry"].make_valid()
+        except Exception:
+            pass
+        if gdf.crs.to_epsg() != 32646:
+            gdf = gdf.to_crs(WORKING_CRS)
+        return gdf
+    except Exception:
+        return load_vector_utm(path_string)
+
+
+def _district_bounds(margin=3000.0):
+    if not _ok(boundary_utm):
+        return None
+    minx, miny, maxx, maxy = boundary_utm.total_bounds
+    return (float(minx - margin), float(miny - margin), float(maxx + margin), float(maxy + margin))
+
+
 def _find_2015_source():
     """Locate LULC 2015: a column in the 2022 layer, else a separate file in data/cache."""
     if _ok(lulc_2022_utm):
@@ -509,8 +541,10 @@ def _find_2015_source():
     files = [p for p in LULC_2015_FILES if p.exists()]
     for pattern in ("*2015*.gpkg", "*2015*.shp", "*2015*.geojson"):
         files += [p for p in sorted(CACHE_DIR.glob(pattern)) if p not in files]
+    bounds = _district_bounds()
     for path in files:
-        gdf = load_vector_utm(str(path))
+        gdf = (load_vector_utm_clipped(str(path), bounds) if bounds
+               else load_vector_utm(str(path)))
         if not _ok(gdf):
             continue
         col = (_match_column(gdf.columns, LULC_2015_COLUMNS)
@@ -834,7 +868,16 @@ def canonical_lulc_name(value):
         "moderatelydenseforest": "Forest Moderately Dense",
         "forestdense": "Forest Dense", "denseforest": "Forest Dense",
         "builtup": "Built up", "settlement": "Built up",
-        "waterbody": "Waterbody", "riverstream": "River/Stream",
+        "waterbody": "Waterbody", "waterbodies": "Waterbody", "riverstream": "River/Stream",
+        # NRSC LULC 2015-16 Level-II (forest types, not density)
+        "scrubforest": "Forest Open",
+        "deciduous": "Forest Moderately Dense",
+        "evergreensemievergreen": "Forest Dense", "evergreen": "Forest Dense",
+        "forestplantation": "Plantation",
+        "currentshiftingcultivation": "Shifting Cultivation",
+        "rural": "Built up", "urban": "Built up",
+        "fallow": "Fallow land",
+        "grassgrazingland": "Scrub land",
     }
     if key in exact:
         return exact[key]
@@ -845,7 +888,9 @@ def canonical_lulc_name(value):
         (("crop", "agri", "kharif", "rabi", "paddy", "cultivat", "terrace"), "Crop land"),
         (("plantation", "orchard", "horticult", "arecanut", "teagarden"), "Plantation"),
         (("scrub", "shrub", "bush"), "Scrub land"),
-        (("river", "stream", "drain"), "River/Stream"),
+        (("barren", "rocky", "sandy", "mining", "quarry", "wasteland"), "Barren land"),
+        (("river", "stream", "drain", "canal"), "River/Stream"),
+        (("wetland", "swamp", "marsh", "mangrove"), "Waterbody"),
         (("water", "pond", "lake", "reservoir", "tank"), "Waterbody"),
         (("built", "settlement", "urban", "rural", "village", "habitation", "industrial"), "Built up"),
     ]

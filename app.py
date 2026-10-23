@@ -50,6 +50,28 @@ except Exception:  # pragma: no cover
 
 from streamlit_folium import st_folium
 
+try:
+    from folium.elements import JSCSSMixin
+    from branca.element import MacroElement
+    from jinja2 import Template
+
+    class GestureHandling(JSCSSMixin, MacroElement):
+        """One finger scrolls the page, two fingers move the map (stops the map trapping scroll on phones)."""
+        _template = Template("""
+            {% macro script(this, kwargs) %}
+            {{ this._parent.get_name() }}.gestureHandling.enable();
+            {% endmacro %}""")
+        default_js = [("leaflet_gesture_handling",
+                       "https://unpkg.com/leaflet-gesture-handling@1.2.2/dist/leaflet-gesture-handling.min.js")]
+        default_css = [("leaflet_gesture_handling_css",
+                        "https://unpkg.com/leaflet-gesture-handling@1.2.2/dist/leaflet-gesture-handling.min.css")]
+
+        def __init__(self):
+            super().__init__()
+            self._name = "GestureHandling"
+except Exception:  # pragma: no cover
+    GestureHandling = None
+
 from shapely.geometry import shape, mapping, Point, box
 from shapely.ops import unary_union
 from shapely import affinity
@@ -75,6 +97,27 @@ st.set_page_config(
 )
 
 
+def _detect_mobile():
+    """Compact layout for the Android app (?app=android), ?mobile=1, or a phone browser."""
+    try:
+        qp = st.query_params
+        if qp.get("app") == "android" or qp.get("mobile") in ("1", "true"):
+            return True, qp.get("app") == "android"
+        if qp.get("mobile") in ("0", "false"):
+            return False, False
+    except Exception:
+        pass
+    try:
+        ua = st.context.headers.get("User-Agent", "")
+        return bool(re.search(r"Android|iPhone|iPod|Mobile|GeoPondAndroid", ua)), "GeoPondAndroid" in ua
+    except Exception:
+        return False, False
+
+
+IS_MOBILE, IN_APP = _detect_mobile()
+MAP_HEIGHT = 430 if IS_MOBILE else 640
+
+
 # ============================================================
 # 2. PROJECT PATHS & CONSTANTS
 # ============================================================
@@ -87,7 +130,7 @@ ICAR_LOGO = ASSETS_DIR / "icar_logo.png"
 WORKING_CRS = "EPSG:32646"
 MAP_CENTER = [25.88, 91.88]
 MAP_ZOOM = 12
-APP_VERSION = "2.2"
+APP_VERSION = "2.3"
 
 # --- Rasters -------------------------------------------------
 SLOPE_RASTER = CACHE_DIR / "03_Slope.tif"
@@ -207,7 +250,7 @@ SUITABILITY_WEIGHTS = {
 APP_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap');
 :root{
-  --ink:#0f2a25; --ink-2:#3d5a53; --muted:#7a8f89;
+  --ink:#0f2a25; --ink-2:#2f4a43; --muted:#4f6660;
   --line:#dbe7e3; --card:#ffffff; --bg:#f3f7f6;
   --brand:#067a5f; --brand-2:#0aa37b; --brand-dark:#04382f;
   --water:#1478b8; --amber:#e39b16; --red:#d64045; --green:#18a058;
@@ -290,7 +333,7 @@ html, body, [class*="css"]{font-family:Inter,"Segoe UI",Arial,sans-serif;}
 .gp-hint{background:linear-gradient(120deg,#e8f3fb,#f6fbfd);color:#22556c;border:1px solid #d1e6f1;border-left:4px solid var(--water);border-radius:12px;padding:10px 13px;font-size:12.5px;line-height:1.6;}
 .kv{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
 .kv div{background:#f4f8f7;border-radius:10px;padding:8px 10px;}
-.kv span{display:block;font-size:10.5px;color:var(--muted);}
+.kv span{display:block;font-size:11px;color:var(--muted);font-weight:500;}
 .kv b{display:block;font-size:14px;color:var(--ink);margin-top:2px;}
 .kv4{grid-template-columns:repeat(4,minmax(0,1fr));}
 .mono{font-family:"JetBrains Mono",monospace;}
@@ -330,6 +373,29 @@ iframe{border-radius:14px;}
 @media only screen and (max-width:1250px){
   .gp-head-stats{margin-left:0;}
   .gp-title{font-size:27px;}
+}
+.mobile-only{display:none;}
+.leaflet-gesture-handling-touch-warning:after,.leaflet-gesture-handling-scroll-warning:after{font-family:Inter,sans-serif;font-size:15px;}
+@media only screen and (max-width:900px){
+  .mobile-only{display:block;}
+  html, body, [class*="css"]{font-size:15.5px;}
+  .gp-head-stats, .gp-chips, .gp-org{display:none;}
+  .gp-logo img{width:56px;height:56px;}
+  .gp-subtitle{font-size:13px;}
+  .gp-steps{padding:4px;margin:8px 0 10px;}
+  .gp-step{min-width:96px;padding:6px 6px;gap:6px;}
+  .gp-step .t small{display:none;}
+  .gp-step .t{font-size:11.5px;}
+  .gp-section{margin:16px 0 8px;}
+  .gp-section h3{font-size:17px;}
+  .gp-card{padding:12px;}
+  .kv b{font-size:15px;}
+  .verdict .v{font-size:24px;}
+  .stButton>button,.stDownloadButton>button{min-height:52px;font-size:15px;}
+  .stTabs [data-baseweb="tab"]{height:44px;padding:0 10px;font-size:13px;}
+  [data-testid="stMetricValue"]{font-size:1.3rem;}
+  [data-testid="stHorizontalBlock"]{gap:.5rem;}
+  .mobile-tip{background:#fff7e0;border:1px solid #f0d58a;color:#5a4300;border-radius:12px;padding:10px 12px;font-size:14px;margin:6px 0 10px;}
 }
 @media only screen and (max-width:900px){
   .block-container{padding:.2rem .3rem 2rem;}
@@ -1996,7 +2062,13 @@ Cost figures use the rates entered by the user and are indicative only.</div>
 
 logo_b64 = image_to_base64(ICAR_LOGO)
 
-with st.sidebar:
+# Header + stepper are drawn into this slot later, so on phones the settings panel
+# (an expander instead of the hard-to-find sidebar) appears just below them.
+header_slot = st.container()
+settings_box = (st.expander("⚙️  Settings — farmer details, cost rates, map options", expanded=False)
+                if IS_MOBILE else st.sidebar)
+
+with settings_box:
     logo_small = (
         f'<img src="data:image/png;base64,{logo_b64}" style="width:44px;height:44px;background:#fff;border-radius:10px;padding:3px">'
         if logo_b64 else '<div style="font-size:34px">💧</div>'
@@ -2071,7 +2143,7 @@ assessment = st.session_state["assessment"]
 head_area = f"{field_area_ha(field):.2f} ha" if field else "—"
 head_si = f"{assessment['suitability']['index']:.0f}" if assessment else "—"
 
-st.markdown(
+header_slot.markdown(
     f"""
 <div class="gp-header"><div class="gp-header-row">
 {logo_html}
@@ -2118,7 +2190,7 @@ def render_stepper():
         mark = "✓" if done else str(i)
         items.append(f'<div class="gp-step {cls}"><div class="n">{mark}</div>'
                      f'<div class="t">{t}<small>{sub}</small></div></div>')
-    st.markdown(f'<div class="gp-steps">{"".join(items)}</div>', unsafe_allow_html=True)
+    header_slot.markdown(f'<div class="gp-steps">{"".join(items)}</div>', unsafe_allow_html=True)
 
 
 render_stepper()
@@ -2130,6 +2202,14 @@ render_stepper()
 
 section("🗺", "Field mapping workspace",
         "Locate the field with GPS or search, trace its boundary — or upload a boundary file")
+
+if IS_MOBILE:
+    st.markdown(
+        '<div class="mobile-tip">👆 <b>One finger</b> scrolls the page · ✌️ <b>two fingers</b> move and zoom '
+        'the map.<br>Tap <b>◎</b> for GPS, then <b>⬠</b> and tap the field corners to draw the boundary. '
+        'Settings are in <b>⚙️ Settings</b> at the top.</div>',
+        unsafe_allow_html=True,
+    )
 
 map_col, side_col = st.columns([2.6, 1], gap="medium")
 
@@ -2234,12 +2314,14 @@ with map_col:
     ).add_to(field_map)
 
     add_tools(field_map)
-    if show_minimap:
+    if IS_MOBILE and GestureHandling is not None:
+        GestureHandling().add_to(field_map)
+    if show_minimap and not IS_MOBILE:
         MiniMap(toggle_display=True, position="bottomright", zoom_level_offset=-6).add_to(field_map)
     folium.LayerControl(position="topright", collapsed=True).add_to(field_map)
 
     map_output = st_folium(
-        field_map, height=640, use_container_width=True,
+        field_map, height=MAP_HEIGHT, use_container_width=True,
         key=f"geopond_field_map_{st.session_state['map_nonce']}",
         returned_objects=["all_drawings", "last_active_drawing"],
     )
@@ -2632,8 +2714,13 @@ if assessment and field:
     k[5].metric("Indicative cost", f"₹ {cost['total'] / 1e5:,.2f} L", fmt(cost["per_m3"], "₹ {:,.0f}/m³"),
                 delta_color="off")
 
-    tabs = st.tabs(["🗺 Site map", "🎯 Suitability", "💧 Hydrology", "📐 Pond design",
-                    "🪨 Geology & seepage", "💰 Cost", "📄 Report & export", "🔬 Technical"])
+    tabs = st.tabs(
+        ["🗺 Map", "🎯 Score", "💧 Water", "📐 Design", "🪨 Geology", "💰 Cost", "📄 Report", "🔬 Tech"]
+        if IS_MOBILE else
+        ["🗺 Site map", "🎯 Suitability", "💧 Hydrology", "📐 Pond design",
+         "🪨 Geology & seepage", "💰 Cost", "📄 Report & export", "🔬 Technical"])
+    if IS_MOBILE:
+        st.caption("◀ Swipe the tab bar sideways to see all 8 tabs ▶")
 
     # ---- 1. site map ---------------------------------------------------
     with tabs[0]:
@@ -2717,8 +2804,10 @@ if assessment and field:
                           icon=folium.Icon(color="orange", icon="arrow-down", prefix="fa")).add_to(result_map)
 
             add_tools(result_map)
-            folium.LayerControl(collapsed=False, position="topright").add_to(result_map)
-            st_folium(result_map, height=640, use_container_width=True, key="result_map",
+            if IS_MOBILE and GestureHandling is not None:
+                GestureHandling().add_to(result_map)
+            folium.LayerControl(collapsed=IS_MOBILE, position="topright").add_to(result_map)
+            st_folium(result_map, height=MAP_HEIGHT, use_container_width=True, key="result_map",
                       returned_objects=[])
 
         with ic:

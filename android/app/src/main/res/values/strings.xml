@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GeoPond-DSS</string>
+    <string name="subtitle">ICAR NEH · Pond &amp; Jalkund planning</string>
+    <string name="retry">Retry</string>
+    <string name="offline_title">No internet connection</string>
+    <string name="offline_msg">GeoPond-DSS runs its GIS analysis on the server. Connect to mobile data or Wi-Fi and tap Retry.</string>
+    <string name="error_title">Could not reach the DSS server</string>
+    <string name="menu_reload">Reload</string>
+    <string name="menu_home">Start page</string>
+    <string name="menu_gps">GPS fix check</string>
+    <string name="menu_browser">Open in browser</string>
+    <string name="menu_share">Share app link</string>
+    <string name="menu_server">Server address</string>
+    <string name="menu_about">About</string>
+</resources>
